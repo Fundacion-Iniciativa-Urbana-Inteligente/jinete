@@ -1,0 +1,123 @@
+.leaflet-popup-content-wrapper {
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.leaflet-popup-content {
+  margin: 0 !important;
+  width: 100% !important;
+}
+
+.custom-popup {
+  min-width: 280px;
+  max-width: 300px;
+}
+
+.popup-header {
+  background-color: #0d6efd;
+  color: white;
+  padding: 12px 15px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1rem;
+}
+
+.popup-header i {
+  font-size: 1.2rem;
+}
+
+.popup-content {
+  padding: 5px 15px;
+}
+
+.info-row {
+  display: flex;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #eee;
+}
+
+.info-row:last-child {
+  border-bottom: none;
+}
+
+.info-row i {
+  font-size: 1rem;
+  margin-right: 12px;
+  color: #666;
+  min-width: 20px;
+  text-align: center;
+}
+
+.info-row .status-icon {
+  color: #dc3545;
+}
+
+.info-row div {
+  flex: 1;
+}
+
+.info-row label {
+  color: #666;
+  font-size: 0.85rem;
+  display: block;
+  margin-bottom: 1px;
+}
+
+.info-row span {
+  color: #333;
+  font-size: 0.9rem;
+  display: block;
+}
+
+.device-actions {
+  margin: 0;
+  border-top: 1px solid #eee;
+}
+
+.device-actions button {
+  border: none;
+  border-radius: 0;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 0.95rem;
+  transition: background-color 0.2s ease;
+}
+
+.device-actions button:first-child {
+  border-bottom: 1px solid rgba(0,0,0,0.1);
+}
+
+.device-actions button:last-child {
+  border-radius: 0;
+}
+
+.device-actions button:disabled {
+  opacity: 1;
+  background-color: #6c757d;
+}
+
+.device-actions button i {
+  font-size: 1rem;
+} 
+
+/* Asegura que el contenedor ocupe toda la pantalla */
+html, body, #root, #mapa {
+  height: 100vh; /* Altura completa de la ventana */
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Configuración del contenedor del mapa */
+.leaflet-container {
+  flex: 1; /* Permite que el mapa crezca para llenar el contenedor */
+  width: 100%; /* Asegura el ancho completo */
+  height: 100%; /* Asegura la altura completa */
+  position: relative;
+}
