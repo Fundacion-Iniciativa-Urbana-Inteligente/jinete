@@ -81,8 +81,9 @@ async function loadServiceAccount() {
     }
   }
 }
+// Llamar a la función de carga de credenciales
+loadServiceAccount();
 
-module.exports = { loadServiceAccount };
   // Inicializar Firebase Admin SDK
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
@@ -93,12 +94,7 @@ module.exports = { loadServiceAccount };
   // Asignar Firestore a db
   global.db = admin.firestore(); // Usa `global` para compartir `db` en todo el archivo
   console.log('Firestore inicializado correctamente.');
-}
-
-
-// Llamar a la función de carga de credenciales
-loadServiceAccount();
-
+  
 // Middleware para procesar datos URL-encoded y JSON
 app.use(express.urlencoded({ extended: true })); // Esto procesa datos URL-encoded
 app.use(express.json()); // Esto procesa datos JSON
@@ -600,6 +596,7 @@ async function sendMessage(body, to) {
 }
 
 // Ruta para chatbot con WhatsApp
+// Ruta para chatbot con WhatsApp (WebHook de Twilio)
 app.post("/webhook", async (req, res) => {
   const { Body, From } = req.body;
 
@@ -611,22 +608,41 @@ app.post("/webhook", async (req, res) => {
   console.log(`📩 Mensaje recibido de ${From}: ${Body}`);
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4", // Usa el modelo adecuado
-      messages: [
-        { role: "system", content: "You are a helpful assistant." },
-        { role: "user", content: Body },
-      ],
-    });
+    let responseMessage;
 
-    const responseMessage = completion.choices[0].message.content.trim();
+    // Comprobamos si el mensaje trata sobre un pago
+    if (Body.toLowerCase().includes("pagar") || Body.toLowerCase().includes("alquilar bicicleta")) {
+      console.log("🔍 Se detectó un mensaje relacionado con pagos.");
 
-    // Enviar respuesta al usuario (Twilio)
+      // Datos de pago predefinidos (esto se puede personalizar con información del usuario)
+      const userEmail = "usuario@ejemplo.com"; // Se puede obtener del usuario registrado
+      const title = "Alquiler de bicicleta";
+      const quantity = 1;
+      const unitPrice = 500; // Precio de ejemplo
+
+      // Generar la preferencia de pago en MercadoPago
+      const preference = await createPreference(userEmail, title, quantity, unitPrice);
+
+      responseMessage = `🚲 Para alquilar tu bicicleta, por favor realiza el pago aquí: ${preference.init_point}`;
+    } else {
+      // Si el mensaje no es sobre pagos, responde normalmente con OpenAI
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4",
+        messages: [
+          { role: "system", content: "Eres un asistente útil para Jinete.ar." },
+          { role: "user", content: Body },
+        ],
+      });
+
+      responseMessage = completion.choices[0].message.content.trim();
+    }
+
+    // Enviar respuesta al usuario por WhatsApp
     await sendMessage(responseMessage, From);
 
     res.status(200).send("Mensaje procesado correctamente.");
   } catch (error) {
-    console.error("❌ Error al manejar el mensaje de OpenAI:", error.message);
+    console.error("❌ Error al manejar el mensaje:", error.message);
     res.status(500).json({ message: "Error al procesar el mensaje." });
   }
 });
