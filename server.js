@@ -125,15 +125,11 @@ app.get('/', (req, res) => {
 // Función para crear una preferencia de pago
 // Reemplaza tu createPreference original por esta versión
 // que NO hace throw, sino que devuelve { error: boolean, message?: string, preference?: any }
-async function createPreference(email, title, quantity, unitPrice) {
-  const idempotencyKey = randomUUID(); // asumes que hiciste import { randomUUID } from 'crypto';
-  const preference = new Preference(client); // tu config de MP
+async function createPreference(email, title, quantity, unitPrice, externalReference) {
+  const idempotencyKey = randomUUID();
+  const preference = new Preference(client); 
 
   try {
-    console.log('Creando preferencia con los siguientes datos:', {
-      email, title, quantity, unitPrice, idempotencyKey
-    });
-
     const response = await preference.create({
       body: {
         payer: { email },
@@ -145,40 +141,29 @@ async function createPreference(email, title, quantity, unitPrice) {
           },
         ],
         back_urls: {
-          success: 'https://jinete-ar.web.app/success',
-          failure: 'https://jinete-ar.web.app/failure',
-          pending: 'https://jinete-ar.web.app/pending',
+          success: `${process.env.VITE_BACKEND_URL}/mp/success`,
+          failure: `${process.env.VITE_BACKEND_URL}/mp/failure`,
+          pending: `${process.env.VITE_BACKEND_URL}/mp/pending`,
         },
         auto_return: 'approved',
+        external_reference: JSON.stringify(externalReference), 
       },
       requestOptions: {
         idempotencyKey,
       },
     });
 
-    console.log('Respuesta completa de Mercado Pago:', response);
-
     if (!response || !response.init_point) {
-      // No tenemos el link => devolvemos error sin lanzar excepción
       return { error: true, message: 'La respuesta de Mercado Pago no contiene init_point.' };
     }
-
-    // Éxito => devolvemos la preferencia
     return { error: false, preference: response };
 
   } catch (error) {
-    // Aquí detectamos si fue un timeout u otro problema
-    console.error('❌ Error en createPreference:', error.message);
-
-    // Si detectas texto "timeout" o "network" en el error
-    if (error.message.includes('timeout')) {
-      return { error: true, message: 'Timeout de Mercado Pago al crear la preferencia.' };
-    }
-
-    // error genérico
+    console.error('❌ Error al crear preferencia:', error.message);
     return { error: true, message: error.message };
   }
 }
+
 
 // Ruta para crear un pago en Mercado Pago
 app.post('/api/mercadopago/create_payment', async (req, res) => {
@@ -198,6 +183,142 @@ app.post('/api/mercadopago/create_payment', async (req, res) => {
   } catch (error) {
     console.error('Error al crear la preferencia de pago:', error.message);
     return res.status(500).json({ message: 'Error al crear la preferencia de pago.' });
+  }
+});
+
+app.get("/mp/success", async (req, res) => {
+  try {
+    // MP te enviará varios query params => payment_id, status, external_reference, etc.
+    const { payment_id, status, external_reference } = req.query;
+
+    // "external_reference" vendrá JSON-encoded => parsearlo:
+    const parsedRef = JSON.parse(external_reference || "{}");
+    // Ejemplo: parsedRef => { phone: "whatsapp:+549...", docId: "abc123" }
+
+    console.log("💵 [SUCCESS] Pago aprobado =>", { payment_id, status, parsedRef });
+
+    // 1) Buscar la subcolección "pagos" y el doc:
+    const phone = parsedRef.phone;  // Por ejemplo "whatsapp:+549...”
+    const docId = parsedRef.docId;  // ID del pago en tu subcolección
+    const paymentRef = db.collection("usuarios")
+                         .doc(phone)
+                         .collection("pagos")
+                         .doc(docId);
+
+    // 2) Actualizar el doc => status: "approved", mpOrderId, ...
+    await paymentRef.update({
+      status: "approved",
+      mpOrderId: payment_id || "",
+      updatedAt: new Date().toISOString(),
+    });
+
+    // 3) Sumar el saldo al usuario => (si es recarga)
+    const paymentSnap = await paymentRef.get();
+    if (paymentSnap.exists) {
+      const paymentData = paymentSnap.data();
+      const amount = paymentData.amount || 0;
+      // Sumar a "saldo" en usuarios
+      const userRef = db.collection("usuarios").doc(phone);
+      await db.runTransaction(async (t) => {
+        const userDoc = await t.get(userRef);
+        if (!userDoc.exists) return;
+        const userData = userDoc.data();
+        const saldoActual = parseFloat(userData.saldo || "0");
+        const nuevoSaldo = saldoActual + amount;
+        t.update(userRef, { saldo: nuevoSaldo.toString() });
+      });
+    }
+
+    // 4) Notificar al usuario por WhatsApp
+    await sendMessage(
+      `✔️ ¡Gracias! Tu pago (ID ${payment_id}) fue aprobado y tu saldo ha sido actualizado.`,
+      phone
+    );
+
+    // 5) Opcional: responder con un HTML sencillo
+    res.send(`
+      <html>
+        <body>
+          <h1>¡Pago aprobado!</h1>
+          <p>Puedes cerrar esta ventana.</p>
+        </body>
+      </html>
+    `);
+    
+  } catch (error) {
+    console.error("❌ Error en /mp/success:", error.message);
+    res.status(500).send("Error procesando el pago.");
+  }
+});
+
+app.get("/mp/failure", async (req, res) => {
+  try {
+    const { payment_id, status, external_reference } = req.query;
+    const parsedRef = JSON.parse(external_reference || "{}");
+    
+    console.log("💵 [FAILURE] Pago fallido =>", { payment_id, status, parsedRef });
+    
+    // Actualiza el doc a "failure"
+    const phone = parsedRef.phone;
+    const docId = parsedRef.docId;
+    const paymentRef = db.collection("usuarios").doc(phone).collection("pagos").doc(docId);
+
+    await paymentRef.update({
+      status: "failure",
+      mpOrderId: payment_id || "",
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Notificar al usuario
+    await sendMessage(`❌ Tu pago (ID ${payment_id}) falló o fue rechazado.`, phone);
+
+    // Respuesta
+    res.send(`
+      <html>
+        <body>
+          <h1>Pago fallido</h1>
+          <p>Intenta nuevamente más tarde.</p>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error("❌ Error en /mp/failure:", error.message);
+    res.status(500).send("Error procesando el rechazo del pago.");
+  }
+});
+
+app.get("/mp/pending", async (req, res) => {
+  try {
+    const { payment_id, status, external_reference } = req.query;
+    const parsedRef = JSON.parse(external_reference || "{}");
+
+    console.log("💵 [PENDING] Pago pendiente =>", { payment_id, status, parsedRef });
+
+    // Actualizar doc => status: "pending"
+    const phone = parsedRef.phone;
+    const docId = parsedRef.docId;
+    const paymentRef = db.collection("usuarios").doc(phone).collection("pagos").doc(docId);
+
+    await paymentRef.update({
+      status: "pending",
+      mpOrderId: payment_id || "",
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Notificar al usuario (opcional)
+    await sendMessage(`⏳ Tu pago (ID ${payment_id}) está pendiente.`, phone);
+
+    res.send(`
+      <html>
+        <body>
+          <h1>Pago pendiente</h1>
+          <p>Por favor, espera la confirmación.</p>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error("❌ Error en /mp/pending:", error.message);
+    res.status(500).send("Error procesando el pago pendiente.");
   }
 });
 
@@ -583,11 +704,11 @@ app.get("/gbfs.json", (req, res) => {
     data: {
       en: {
         feeds: [
-          { name: "system_information", url: `${process.env.BASE_URL}/gbfs/system_information.json` },
-          { name: "free_bike_status", url: `${process.env.BASE_URL}/gbfs/free_bike_status.json` },
-          { name: "geofencing_zones", url: `${process.env.BASE_URL}/gbfs/geofencing_zones.json` },
-          { name: "vehicle_types", url: `${process.env.BASE_URL}/gbfs/vehicle_types.json` },
-          { name: "system_pricing_plans", url: `${process.env.BASE_URL}/gbfs/system_pricing_plans.json` }
+          { name: "system_information", url: `${process.env.VITE_BACKEND_URL}/gbfs/system_information.json` },
+          { name: "free_bike_status", url: `${process.env.VITE_BACKEND_URL}/gbfs/free_bike_status.json` },
+          { name: "geofencing_zones", url: `${process.env.VITE_BACKEND_URL}/gbfs/geofencing_zones.json` },
+          { name: "vehicle_types", url: `${process.env.VITE_BACKEND_URL}/gbfs/vehicle_types.json` },
+          { name: "system_pricing_plans", url: `${process.env.VITE_BACKEND_URL}/gbfs/system_pricing_plans.json` }
         ]
       }
     }
@@ -739,6 +860,23 @@ async function sendMessage(body, to) {
   }
 }
 
+// -------------------------------------------
+// Envía el Menú Principal
+// -------------------------------------------
+async function sendMainMenu(to) {
+  const text =
+    `*Menú principal*\n` +
+    `1) Registro\n` +
+    `2) Solicitar token de desbloqueo\n` +
+    `3) Soporte\n` +
+    `4) Ver saldo\n` +
+    `5) Recargar saldo\n` +
+    `6) Salir\n\n` +
+    `Para regresar a este menú en cualquier momento, escribe "Menu".`;
+
+  await sendMessage(text, to);
+}
+
 async function interpretUserMessageWithGPT(userMessage) {
   try {
     // Prompts: system + user
@@ -790,258 +928,403 @@ async function interpretUserMessageWithGPT(userMessage) {
   }
 }
 
-
 // 📌 Webhook de WhatsApp 
 // Ejemplo de la parte "/webhook" que combina Regex + GPT + tu FSM
 app.post("/webhook", async (req, res) => {
   const { Body, From } = req.body;
   if (!Body || !From) return res.status(400).json({ message: "Datos incompletos recibidos." });
 
-  try {
-    // 1) Verificar si el usuario escribió exactamente "Soporte"
-    if (Body.toLowerCase().trim() === "soporte") {
-      await sendMessage("📞 *Soporte de Jinete.ar* ...", From);
-      return res.status(200).send("Mensaje de soporte enviado.");
+  // 1) Revisamos si el usuario ha escrito "Hola, quiero alquilar BICINAME"
+  //    Ejemplo: "Hola, quiero alquilar Pegasus"
+  const regexAlquilar = /hola,\s*quiero\s*alquilar\s+(.+)/i;
+  const match = Body.match(regexAlquilar);
+  if (match) {
+    const bikeName = match[1].trim(); // "Pegasus"
+  
+    // Buscar en Firestore el doc cuyo "bike_id" sea "Pegasus"
+    const bikesRef = db.collection("free_bike_status");
+    const querySnap = await bikesRef.where("bike_id", "==", bikeName).limit(1).get();
+  
+    if (querySnap.empty) {
+      await sendMessage(
+        `No encontré una bicicleta con el nombre "${bikeName}". Por favor, verifica el nombre.`,
+        From
+      );
+      return res.status(200).send("Bike no encontrada");
     }
-
-    // 2) Consultar si hay sesión activa
+  
+    // Tomamos el primer documento encontrado
+    const doc = querySnap.docs[0];
+    const imei = doc.id;         // "860187050182074" (SECRETO)
+    // const data = doc.data();  // Tendrá bike_id, lat, etc.
+  
+    // Guardamos en la sesión el IMEI y el bike_id, pero **sin** mostrar el IMEI al usuario
     const sessionRef = db.collection("users_session").doc(From);
-    const sessionDoc = await sessionRef.get();
-
-    if (sessionDoc.exists) {
-      // => Ya estamos en un paso de la FSM => handleUserResponse
-      return handleUserResponse(Body, From, res);
-    }
-
-    // 3) Verificar si el usuario existe en 'usuarios'
-    const userRef = db.collection("usuarios").doc(From);
-    const userDoc = await userRef.get();
-
-    if (userDoc.exists && userDoc.data().validado) {
-      // Usuario validado => Intentar regex
-      const regex = /(?:alquilar la bicicleta|quiero alquilar) (.*)/i;
-      const match = Body.match(regex);
-      const selectedBike = match ? match[1].trim() : null;
-
-      if (selectedBike) {
-        // Iniciar el flujo de tokens
-        await sessionRef.set({ step: "ask_tokens", selectedBike });
-        await sendMessage(
-          `Has elegido la bicicleta *${selectedBike}*. ¿Cuántos tokens deseas?`,
-          From
-        );
-        return res.status(200).send("Flujo de alquiler iniciado.");
-      }
-
-      // Si la regex no matchea, intentamos GPT
-      const gptResult = await interpretUserMessageWithGPT(Body);
-      // Dependiendo de gptResult.intent => actúas
-      // Ej. "alquilar", "ver_saldo", etc.
-      // [Código de ejemplo GPT con switch de intenciones...]
-
-      return res.status(200).send("GPT interpretó intención.");
-    }
-
-    // 4) Usuario NO existe => iniciar registro o GPT
-    await sessionRef.set({ step: "ask_name" });
+    await sessionRef.set(
+      {
+        step: "menu_main",
+        selectedBikeImei: imei,    // Uso interno
+        selectedBikeName: bikeName // Mostrar al usuario en mensajes
+      },
+      { merge: true }
+    );
+  
     await sendMessage(
-      "No encontré tus datos. Vamos a registrarte. ¿Cuál es tu nombre?",
+      `¡Entendido! Solo podras alquilar *${bikeName}* si tienes saldo en tu cuenta $Jinete. \n\n` +
+      `Escribe *"Menu"* para ver las opciones disponibles.`,
       From
     );
-    return res.status(200).send("Inicia registro.");
-
-  } catch (error) {
-    console.error("Error en /webhook:", error);
-    return res.status(500).json({ message: "Error interno." });
+    return res.status(200).send("Bicicleta preferida guardada");
   }
-});
-
-export const handleUserResponse = async (Body, From, res) => {
+  // 2) Si no hace match con "hola, quiero alquilar...", sigues tu flujo normal:
+  // Verificar sesión
   const sessionRef = db.collection("users_session").doc(From);
   const sessionDoc = await sessionRef.get();
 
+  // (Opcional) si escribe "menu" en cualquier momento:
+  if (Body.trim().toLowerCase() === "menu") {
+    await sessionRef.set({ step: "menu_main" }, { merge: true });
+    await sendMainMenu(From);
+    return res.status(200).send("Menú forzado.");
+  }
+
   if (!sessionDoc.exists) {
-    await sendMessage("No encontré tu sesión activa. Escribe 'Hola' para empezar.", From);
-    return res.status(400).json({ message: "Sesión no encontrada o inválida." });
+    // Si no hay sesión, creas una con step=menu_main o un "intro"
+    await sessionRef.set({ step: "menu_main" });
+    await sendMainMenu(From);
+    return res.status(200).send("Nueva sesión, menú principal enviado.");
+  }
+
+  // 3) Si ya hay sesión => manejar en handleUserResponse
+  return handleUserResponse(Body, From, res);
+});
+
+
+// -------------------------------------------
+// Manejo de la sesión
+// -------------------------------------------
+export const handleUserResponse = async (Body, From, res) => {
+  const sessionRef = db.collection("users_session").doc(From);
+  const sessionDoc = await sessionRef.get();
+  if (!sessionDoc.exists) {
+    // Si por algún motivo no existe la sesión
+    await sendMessage("No encontré tu sesión. Escribe 'Menu' para ver opciones.", From);
+    return res.status(400).json({ message: "Sesión no encontrada." });
   }
 
   const { step, selectedBike } = sessionDoc.data();
 
   switch (step) {
-    // ------------------ REGISTRO ------------------
-    case "ask_name":
-      await sessionRef.update({ name: Body, step: "ask_lastname" });
-      await sendMessage("📝 Ahora dime tu *apellido*:", From);
-      break;
+    /* -------------------------------------------------
+       MENÚ PRINCIPAL
+    ------------------------------------------------- */
+    case "menu_main": {
+      const option = Body.trim();
+      switch (option) {
+        case "1": // Registro
+          await sessionRef.update({ step: "ask_name" });
+          await sendMessage("Has elegido *Registro*. ¿Cuál es tu nombre?", From);
+          return res.status(200).send("Iniciando registro");
 
-    case "ask_lastname":
-      await sessionRef.update({ lastName: Body, step: "ask_dni" });
-      await sendMessage("🔢 Ahora ingresa tu *DNI*:", From);
-      break;
+          case "2": {
+            // 1) Verificar que exista un usuario en tu colección "usuarios"
+            const userSnap = await db.collection("usuarios").doc(From).get();
+            if (!userSnap.exists) {
+              await sendMessage(
+                "No encuentro tu usuario. Elige la opción '1' para registrarte o escribe 'menu' para ver opciones.",
+                From
+              );
+              return res.status(200).send("Usuario no registrado");
+            }
+          
+            // 2) Verificar que el usuario tenga saldo > 0 (o el mínimo que quieras).
+            const userData = userSnap.data();
+            const saldoActual = parseFloat(userData.saldo || "0");
+            if (saldoActual <= 0) {
+              await sendMessage(
+                "No tienes saldo suficiente. Selecciona '5' para recargar saldo o escribe 'menu' para volver al menú principal.",
+                From
+              );
+              return res.status(200).send("Saldo insuficiente");
+            }
+          
+            // 3) Verificar que en la sesión existan la IMEI y el nombre de la bici
+            const { selectedBikeImei, selectedBikeName } = sessionDoc.data();
+            if (!selectedBikeImei || !selectedBikeName) {
+              await sendMessage(
+                "No tienes ninguna bicicleta seleccionada. Escribe: 'Hola, quiero alquilar <nombre_bici>'.",
+                From
+              );
+              return res.status(200).send("No hay selectedBikeImei o selectedBikeName");
+            }
+          
+            // 4) (Opcional) Verificar en la colección free_bike_status que sea la misma bici y que no esté reservada/deshabilitada.
+            const bikeSnap = await db.collection("free_bike_status").doc(selectedBikeImei).get();
+            if (!bikeSnap.exists) {
+              await sendMessage(
+                "La bicicleta elegida no está disponible. Verifica el nombre o escribe 'menu' para volver al menú.",
+                From
+              );
+              return res.status(200).send("Documento no existe en free_bike_status");
+            }
+          
+            const bikeData = bikeSnap.data();
+            // Por si quieres asegurarte de que coincida el bike_id:
+            if (bikeData.bike_id !== selectedBikeName) {
+              await sendMessage(
+                `Parece que la bici *${selectedBikeName}* cambió o no coincide. Por favor, escribe: 'Hola, quiero alquilar <nombre_bici>'.`,
+                From
+              );
+              return res.status(200).send("Mismatch en bike_id");
+            }
+          
+            // Verificar que no esté reservada/deshabilitada
+            if (bikeData.is_reserved === true || bikeData.is_disabled === true) {
+              await sendMessage(
+                `Lo siento, la bicicleta *${selectedBikeName}* no está disponible en este momento.`,
+                From
+              );
+              return res.status(200).send("Bici reservada o deshabilitada");
+            }
+          
+            // Si todo está OK => Generar token
+            try {
+              const tokenURL = `${process.env.VITE_BACKEND_URL}/api/token/${selectedBikeImei}`;
+              const response = await axios.get(tokenURL);
+              const { token } = response.data;
+          
+              // 5) Respuesta al usuario (sin mostrar IMEI)
+              await sendMessage(
+                `Tu token de desbloqueo para la bicicleta *${selectedBikeName}* es: *${token}*\n` +
+                `Recuerda que expira en 3 minutos.\n\n¡Buen viaje!`,
+                From
+              );
+          
+              return res.status(200).send("Token enviado");
+            } catch (error) {
+              console.error("Error generando token:", error.message);
+              await sendMessage(
+                "Ocurrió un problema generando tu token de desbloqueo. Escribe 'Soporte' o 'menu' para asistencia.",
+                From
+              );
+              return res.status(500).send("Error generando token");
+            }
+          }
+          
+          
+        case "3": // Soporte
+          await sendMessage("Has elegido *Soporte*. ¿En qué podemos ayudarte?", From);
+          return res.status(200).send("Soporte");
 
-    case "ask_dni":
+        case "4": // Ver saldo
+          {
+            const userSnap = await db.collection("usuarios").doc(From).get();
+            if (!userSnap.exists) {
+              await sendMessage(
+                "No encuentro tu usuario. Selecciona '1' para registrarte o escribe 'menu' para ver opciones.",
+                From
+              );
+              return res.status(200).send("Usuario no registrado");
+            }
+            const { saldo } = userSnap.data();
+            await sendMessage(`Tu saldo actual es: *${saldo}* créditos.`, From);
+            return res.status(200).send("Saldo consultado");
+          }
+
+        case "5": // Recargar saldo
+          await sessionRef.update({ step: "ask_recarga" });
+          await sendMessage("¿Cuánto deseas recargar en ARS?", From);
+          return res.status(200).send("Iniciando recarga de saldo");
+
+        case "6": // Salir
+          await sessionRef.delete();
+          await sendMessage("¡Gracias por usar Jinete.ar! Vuelve pronto. 🙌", From);
+          return res.status(200).send("Sesión terminada");
+
+        default:
+          // Fallback => Pide de nuevo o GPT si quieres
+          await sendMessage(
+            "No entendí tu opción. Por favor, elige un número del menú o escribe 'menu' para volver a mostrarlo.",
+            From
+          );
+          return res.status(200).send("Menú fallback");
+      }
+    }
+
+    /* -------------------------------------------------
+       REGISTRO: ask_name -> ask_lastname -> ask_dni -> ask_email -> confirm_data
+    ------------------------------------------------- */
+
+    case "ask_name": {
+      await sessionRef.update({ step: "ask_lastname", name: Body });
+      await sendMessage("Ahora ingresa tu *apellido*:", From);
+      return res.status(200).send("Registro: Preguntando apellido");
+    }
+
+    case "ask_lastname": {
+      await sessionRef.update({ step: "ask_dni", lastName: Body });
+      await sendMessage("Ahora ingresa tu *DNI* (solo números):", From);
+      return res.status(200).send("Registro: Preguntando DNI");
+    }
+
+    case "ask_dni": {
       if (!/^\d+$/.test(Body)) {
         await sendMessage("Por favor ingresa solo números para el DNI:", From);
-        return res.status(200).send("Pidiendo DNI numérico.");
+        return res.status(200).send("DNI no válido, pidiendo nuevamente");
       }
-      await sessionRef.update({ dni: Body, step: "ask_email" });
-      await sendMessage("✉️ Ahora ingresa tu *correo electrónico*:", From);
-      break;
+      await sessionRef.update({ step: "ask_email", dni: Body });
+      await sendMessage("Ahora ingresa tu *correo electrónico*:", From);
+      return res.status(200).send("Registro: Preguntando email");
+    }
 
-    case "ask_email":
+    case "ask_email": {
       if (!/\S+@\S+\.\S+/.test(Body)) {
-        await sendMessage("Formato de correo inválido. Intenta nuevamente:", From);
-        return res.status(200).send("Formato email inválido.");
+        await sendMessage("Correo electrónico inválido. Intenta nuevamente:", From);
+        return res.status(200).send("Email no válido, pidiendo nuevamente");
       }
-      await sessionRef.update({ email: Body, step: "confirm_data" });
-      const regData = sessionDoc.data();
+
+      // Guardamos y pedimos confirmación
+      await sessionRef.update({ step: "confirm_data", email: Body });
+      const regData = sessionDoc.data(); // Ojo: sessionDoc no se ha refrescado automáticamente, tal vez conviene recargarlo
       await sendMessage(
-        `📝 Por favor, confirma tus datos:\n\n` +
-        `👤 Nombre: ${regData.name}\n` +
-        `📛 Apellido: ${regData.lastName}\n` +
-        `🆔 DNI: ${regData.dni}\n` +
-        `✉️ Email: ${Body}\n\n` +
-        `Responde "Sí" para confirmar o "No" para corregir.`,
+        `Por favor, confirma tus datos:\n\n` +
+        `Nombre: ${regData.name}\n` +
+        `Apellido: ${regData.lastName}\n` +
+        `DNI: ${regData.dni}\n` +
+        `Email: ${Body}\n\n` +
+        `Responde *Sí* para confirmar o *No* para cancelar.`,
         From
       );
-      break;
+      return res.status(200).send("Registro: Pidiendo confirmación");
+    }
 
-    case "confirm_data":
+    case "confirm_data": {
       if (Body.toLowerCase() === "sí" || Body.toLowerCase() === "si") {
         const finalRegData = sessionDoc.data();
+
+        // Guardar en col "usuarios"
         await db.collection("usuarios").doc(From).set({
           name: finalRegData.name,
           lastName: finalRegData.lastName,
           dni: finalRegData.dni,
           email: finalRegData.email,
-          saldo: "0",
-          validado: true // o false, como prefieras
+          saldo: "0",     // Por defecto
+          validado: true, // Cambiar si quieres
         });
-        await sessionRef.update({ step: "ask_bike" });
-        await sendMessage("✅ Registro completado. ¿Qué bicicleta deseas alquilar? (Ej: 'bici Pegasus')", From);
+
+        // ⚠️ No volver a ask_bike => ahora solo confirmamos
+        await sessionRef.update({ step: "menu_main" }); 
+        await sendMessage(
+          "¡Registro completado exitosamente! Tu saldo inicial es 0. " +
+          "Elige '5' para recargar saldo o escribe 'menu' para ver las opciones.",
+          From
+        );
+        return res.status(200).send("Registro completado");
       } else if (Body.toLowerCase() === "no") {
-        // Reinicia
+        // Cancelar
         await sessionRef.delete();
-        await sendMessage("🚨 Registro cancelado. Escribe 'Hola' para comenzar de nuevo.", From);
+        await sendMessage("Registro cancelado. Escribe 'menu' para comenzar de nuevo.", From);
+        return res.status(200).send("Registro cancelado");
       } else {
-        await sendMessage("Por favor, responde 'Sí' o 'No'.", From);
+        await sendMessage("Por favor, responde *Sí* o *No*.", From);
+        return res.status(200).send("Confirmación no válida");
       }
-      break;
+    }
 
-    case "ask_bike":
-      // El usuario escribirá el nombre de la bici
-      // "Pegasus", "Andes", etc.
-      // Si no ingresa algo, fallback
-      const bikeName = Body.trim();
-      if (!bikeName) {
-        await sendMessage("No te entendí. Dime el nombre de la bicicleta, por favor.", From);
-        return res.status(200).send("Pidiendo nombre de bicicleta.");
+    /* -------------------------------------------------
+       RECARGAR SALDO (opción 5)
+    ------------------------------------------------- */
+    case "ask_recarga": {
+      const monto = parseFloat(Body);
+      if (isNaN(monto)) {
+        await sendMessage("Por favor, ingresa un monto numérico. Ej: 500", From);
+        return res.status(200).send("Monto inválido");
       }
-      // Iniciamos tokens
-      await sessionRef.update({ step: "ask_tokens", selectedBike: bikeName });
-      await sendMessage(
-        `Has elegido la bicicleta *${bikeName}*. ¿Cuántos tokens deseas?`,
-        From
+    
+      // 1) Buscar el usuario y su email
+      const userSnap = await db.collection("usuarios").doc(From).get();
+      if (!userSnap.exists) {
+        await sendMessage("No encuentro tu usuario. Regístrate con la opción '1'.", From);
+        return res.status(200).send("Usuario no registrado");
+      }
+      const userData = userSnap.data();
+      const userEmail = userData.email || "soporte@jinete.ar"; 
+    
+      // 2) Creamos un doc en la subcolección "pagos"
+      const pagosRef = db.collection("usuarios").doc(From).collection("pagos");
+      const newPaymentDoc = pagosRef.doc();
+      const docId = newPaymentDoc.id;
+    
+      // 3) Creamos la preferencia => 'external_reference': { phone, docId }
+      const result = await createPreference(
+        userEmail, 
+        "Recarga de saldo", 
+        1, 
+        monto, 
+        { phone: From, docId }  // <-- external_reference
       );
-      break;
-
-    // ------------------ ALQUILER ------------------
-    case "ask_tokens":
-      // El usuario responde la cantidad, p.ej. "2"
-      const tokens = parseInt(Body, 10);
-      if (isNaN(tokens)) {
-        await sendMessage("Por favor ingresa un número válido de tokens.", From);
-        return res.status(200).send("Pidiendo tokens.");
+    
+      if (result.error) {
+        await sendMessage(
+          "No pude generar el link de pago. Inténtalo más tarde o escribe 'menu' para volver.",
+          From
+        );
+        return res.status(200).send("Error al crear preferencia MP");
       }
-      // p.ej. 250 ARS cada 15 min
-      const tokenPrice = 250;
-      const totalPrice = tokenPrice * tokens;
-
-      await sessionRef.update({
-        step: "confirm_payment",
-        tokens,
-        tokenPrice,
-        totalPrice
+    
+      const preference = result.preference;
+      const initPoint = preference.init_point;
+    
+      // 4) Guardamos "pending" en Firestore
+      await newPaymentDoc.set({
+        amount: monto,
+        concepto: "Recarga de saldo",
+        currency: "ARS",
+        metodo: "MercadoPago",
+        mpOrderId: preference.id || "",
+        status: "pending",
+        timestamp: new Date().toISOString(),
+        initPoint,
       });
+    
+      // 5) Enviamos el link al usuario
       await sendMessage(
-        `El total a pagar por ${tokens} token(s) es *${totalPrice} ARS*.\n¿Confirmas la compra? (Sí/No)`,
+        `Aquí tienes tu link de pago por *${monto} ARS*:\n${initPoint}\n` + 
+        `¡Paga y volverás automáticamente a confirmación!`,
         From
       );
-      break;
+    
+      // 6) Cambiamos el step a "await_payment"
+      await sessionRef.update({ step: "await_payment", recarga: monto });
+      return res.status(200).send("Recarga solicitada, link de pago enviado");
+    }
+  
+    
 
-      case "confirm_payment":
-        if (Body.toLowerCase() === "sí" || Body.toLowerCase() === "si") {
-          const data = sessionDoc.data();
-          const userSnap = await db.collection("usuarios").doc(From).get();
-          const userEmail = userSnap.exists ? userSnap.data().email : "soporte@jinete.ar";
-          const paymentTitle = `Alquiler de ${data.selectedBike} - ${data.totalPrice} ARS`;
-      
-          // Llamamos a createPreference (ya modificada)
-          // Fijate que ahora devuelves un objeto con { error, message, preference }
-          const result = await createPreference(
-            userEmail,
-            paymentTitle,
-            data.tokens,     // Cantidad
-            data.tokenPrice  // Precio unitario
-          );
-      
-          if (result.error) {
-            // ❌ Hubo error => Notificar al usuario y permitir reintento
-            console.log("Error al crear preferencia:", result.message);
-      
-            await sendMessage(
-              "Lo siento, la plataforma de pago está teniendo demoras o falló la conexión. " +
-              "Puedes volver a intentarlo más tarde o escribir 'Soporte' si necesitas ayuda.\n\n" +
-              `Detalle del error: ${result.message}`,
-              From
-            );
-      
-            // Permaneces en el mismo paso "confirm_payment" para que el usuario pueda
-            // responder "Sí" de nuevo en el futuro, o "No" para cancelar.
-            // No hacemos sessionRef.delete().
-            return res.status(200).send("Error al crear preferencia, reintento permitido.");
-          }
-      
-          // Si NO hubo error => tenemos la preferencia
-          const preference = result.preference;
-      
-          await sendMessage(
-            `🚲 *Orden de pago generada.*\n\nRealiza el pago aquí: ${preference.init_point}`,
-            From
-          );
-      
-          // Avanzamos al siguiente step
-          await sessionRef.update({ step: "awaiting_payment" });
-          return res.status(200).send("Esperando pago MP.");
-      
-        } else if (Body.toLowerCase() === "no") {
-          // Cancelación
-          await sessionRef.delete();
-          await sendMessage("🚨 Operación cancelada. Escribe 'Hola' para iniciar de nuevo.", From);
-          return res.status(200).send("Proceso cancelado");
-        } else {
-          await sendMessage("Por favor, responde 'Sí' o 'No'.", From);
-          return res.status(200).send("Esperando confirmación Sí/No");
-        }
-      
-    case "awaiting_payment":
-      // El usuario puede escribir algo => en principio fallback
-      await sendMessage(
-        "Estamos esperando la confirmación de tu pago. Si necesitas ayuda, responde 'Soporte'.",
-        From
-      );
-      break;
+    case "await_payment": {
+      if (Body.toLowerCase().includes("listo")) {
+        // El usuario dijo "Listo, pagué"
+        // OPCIONAL: 1) Verificar con la API de Mercado Pago el estado real
+        // 2) Si 'approved', actualizas en Firestore y sumas saldo
+    
+        await sendMessage("Vamos a verificar el estado de tu pago. Un momento...", From);
+        
+        // (O esperas a que un webhook actualice la DB)
+        return res.status(200).send("El usuario dice que pagó, a confirmar...");
+      }
+    
+      await sendMessage("Estamos esperando la confirmación de tu pago. Si necesitas ayuda, escribe 'Soporte'.", From);
+      return res.status(200).send("Pendiente de pago");
+    }
+    
 
-    // ------------------ Fallback final ------------------
+    /* -------------------------------------------------
+       DEFAULT => Fallback
+    ------------------------------------------------- */
     default:
-      await sendMessage(
-        "Lo siento, no entendí tu respuesta. Si necesitas ayuda, responde con 'Soporte'.",
-        From
-      );
-      break;
+      await sendMessage("No entendí. Escribe 'menu' para ver opciones.", From);
+      return res.status(200).send("Fallback sin step válido");
   }
-
-  return res.status(200).send("OK");
 };
 
 /* 📌 Confirmar pago y enviar token de desbloqueo
