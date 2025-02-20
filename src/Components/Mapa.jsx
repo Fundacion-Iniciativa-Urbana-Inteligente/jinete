@@ -10,23 +10,24 @@ export default function Mapa() {
   const [selectedBike, setSelectedBike] = useState(null);
   const [unlockToken, setUnlockToken] = useState("");
   const [message, setMessage] = useState("");
-  const [userName, setUserName] = useState(""); // Nombre del usuario autenticado
-  const twilioPhoneNumber = "YOUR_TWILIO_PHONE_NUMBER"; // Reemplaza con tu número de Twilio
 
-  // Recuperar usuario desde localStorage
-  useEffect(() => {
-    const storedUser = localStorage.getItem("user");
-    if (storedUser) {
-      const user = JSON.parse(storedUser);
-      setUserName(user.name);
-    }
-  }, []);
 
   useEffect(() => {
     const fetchBicycles = async () => {
       try {
-        const response = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/api/bicycles`);
-        setBicycles(response.data);
+        // Ajusta la URL para que apunte a tu endpoint real.
+        const response = await axios.get(
+          `${import.meta.env.VITE_BACKEND_URL}/gbfs/free_bike_status.json`
+        );
+        // La estructura que retorna tu backend es:
+        // {
+        //   last_updated: ...,
+        //   ttl: ...,
+        //   data: { bikes: [...] }
+        // }
+        // De ahí extraemos data.bikes:
+        const { data } = response.data;
+        setBicycles(data.bikes);
       } catch (error) {
         console.error("Error al obtener bicicletas:", error);
       }
@@ -42,8 +43,8 @@ export default function Mapa() {
     }
 
     try {
-      const response = await axios.post(`${import.meta.env.VITE_BACKEND_URL}/api/unlock`, {
-        imei: selectedBike.imei,
+      const response = await axios.post(`${import.meta.env.VITE_BACKEND_URL}/gbfs/free_bike_status.json`, {
+        imei: selectedBike.bike,
         enteredToken: unlockToken,
       });
 
@@ -60,41 +61,52 @@ export default function Mapa() {
 
   return (
     <div id="mapa">
-      <MapContainer center={defaultPosition} zoom={15}>
+      <MapContainer center={defaultPosition} zoom={15} style={{ height: "80vh" }}>
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-        {bicycles.map((bike) => (
-          <Marker
-            key={bike.imei}
-            position={[bike.lat, bike.lng]}
-            eventHandlers={{
-              click: () => setSelectedBike(bike),
-            }}
-          >
-            <Popup>
-              <strong>{bike.deviceName || "Sin nombre"}</strong>
-              <br />
-              Batería: {bike.batteryPowerVal}%
-              <br />
-              <button
-                onClick={() =>
-                  (window.location.href = `https://wa.me/+14155238886?text=Hola, Soy ${userName}, quiero reservar la bicicleta ${bike.deviceName}`)
-                }
-                style={{
-                  padding: "5px 10px",
-                  backgroundColor: "#25D366",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: "5px",
-                  cursor: "pointer",
-                  marginTop: "10px",
-                }}
+
+        {/** Filtramos las bicis que NO estén deshabilitadas ni reservadas */}
+        {bicycles
+          .filter((bike) => !bike.is_disabled && !bike.is_reserved)
+          .map((bike) => {
+            // Calculamos TnCO2eq evitado a partir de currentMileage:
+            const co2Evitado = parseFloat(bike.currentMileage) * 0.21;
+
+            return (
+              <Marker
+                key={bike.bike_id}
+                position={[bike.lat, bike.lon]}
+                // icon={bikeIcon} // si quieres usar un ícono personalizado
               >
-                <i className="bi bi-whatsapp"></i> Reservar Bicicleta
-              </button>
-            </Popup>
-          </Marker>
-        ))}
+                <Popup>
+                  <strong>{bike.bike_id}</strong>
+                  <br />
+                  TnCO2eq evitado: {co2Evitado.toFixed(2)}
+                  <br />
+                  Batería: {bike.current_fuel_percent} %
+                  <br />
+                  <button
+                    onClick={() => {
+                      // Abre el link de reserva en la misma pestaña o en otra:
+                      window.open(bike.rental_uris.web, "_blank");
+                    }}
+                    style={{
+                      padding: "5px 10px",
+                      backgroundColor: "#25D366",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: "5px",
+                      cursor: "pointer",
+                      marginTop: "10px",
+                    }}
+                  >
+                    Reservar Bicicleta
+                  </button>
+                </Popup>
+              </Marker>
+            );
+          })}
       </MapContainer>
+      
       <footer
         style={{
           marginTop: "20px",
