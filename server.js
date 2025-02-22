@@ -188,63 +188,83 @@ app.post('/api/mercadopago/create_payment', async (req, res) => {
 
 app.get("/mp/success", async (req, res) => {
   try {
-    // MP te enviará varios query params => payment_id, status, external_reference, etc.
     const { payment_id, status, external_reference } = req.query;
-
-    // "external_reference" vendrá JSON-encoded => parsearlo:
     const parsedRef = JSON.parse(external_reference || "{}");
-    // Ejemplo: parsedRef => { phone: "whatsapp:+549...", docId: "abc123" }
+    const phone = parsedRef.phone;
+    const docId = parsedRef.docId;
 
-    console.log("💵 [SUCCESS] Pago aprobado =>", { payment_id, status, parsedRef });
+    console.log("💵 [SUCCESS] =>", { payment_id, status, phone, docId });
 
-    // 1) Buscar la subcolección "pagos" y el doc:
-    const phone = parsedRef.phone;  // Por ejemplo "whatsapp:+549...”
-    const docId = parsedRef.docId;  // ID del pago en tu subcolección
-    const paymentRef = db.collection("usuarios")
-                         .doc(phone)
-                         .collection("pagos")
-                         .doc(docId);
+    // 1) Actualizar en la subcolección a "approved"
+    const paymentRef = db
+      .collection("usuarios")
+      .doc(phone)
+      .collection("pagos")
+      .doc(docId);
 
-    // 2) Actualizar el doc => status: "approved", mpOrderId, ...
     await paymentRef.update({
       status: "approved",
-      mpOrderId: payment_id || "",
+      mpOrderId: payment_id,
       updatedAt: new Date().toISOString(),
     });
 
-    // 3) Sumar el saldo al usuario => (si es recarga)
-    const paymentSnap = await paymentRef.get();
-    if (paymentSnap.exists) {
-      const paymentData = paymentSnap.data();
-      const amount = paymentData.amount || 0;
-      // Sumar a "saldo" en usuarios
-      const userRef = db.collection("usuarios").doc(phone);
-      await db.runTransaction(async (t) => {
-        const userDoc = await t.get(userRef);
-        if (!userDoc.exists) return;
-        const userData = userDoc.data();
-        const saldoActual = parseFloat(userData.saldo || "0");
-        const nuevoSaldo = saldoActual + amount;
-        t.update(userRef, { saldo: nuevoSaldo.toString() });
-      });
-    }
+    // 2) Llamar a la API de MP para obtener datos del pago (incluyendo info de pagador)
+    //    Tienes que usar tu access token (process.env.MERCADOPAGO_TOKEN).
+    //    La doc dice: GET /v1/payments/:id
+    const mpResponse = await axios.get(
+      `https://api.mercadopago.com/v1/payments/${payment_id}`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.MERCADOPAGO_TOKEN}`,
+        },
+      }
+    );
 
-    // 4) Notificar al usuario por WhatsApp
+    const paymentInfo = mpResponse.data; // Este JSON tiene mucha info
+    // Por ejemplo: paymentInfo.payer.email, paymentInfo.payer.first_name, ...
+    // Ajusta según la estructura que retorne MP
+
+    const payerEmail = paymentInfo?.payer?.email || "no-mail@unknown.com";
+    const payerName = paymentInfo?.payer?.first_name || "Desconocido";
+    const payerLastName = paymentInfo?.payer?.last_name || "";
+
+    // 3) Guardar estos datos en el doc de la subcolección “pagos”
+    await paymentRef.update({
+      payerName: `${payerName} ${payerLastName}`.trim(),
+      payerEmail,
+    });
+
+    // 4) Sumar el saldo, etc. (igual que antes)
+    const paymentSnap = await paymentRef.get();
+    const paymentData = paymentSnap.data();
+    const amount = parseFloat(paymentData.amount || 0);
+
+    // 5) Actualizar saldo del usuario
+    const userRef = db.collection("usuarios").doc(phone);
+    await db.runTransaction(async (t) => {
+      const userDoc = await t.get(userRef);
+      if (!userDoc.exists) return; // el usuario no existe
+      const userData = userDoc.data();
+      const saldoActual = parseFloat(userData.saldo || "0");
+      const nuevoSaldo = saldoActual + amount;
+      t.update(userRef, { saldo: nuevoSaldo.toString() });
+    });
+
+    // 6) Notificar al usuario por WhatsApp
     await sendMessage(
-      `✔️ ¡Gracias! Tu pago (ID ${payment_id}) fue aprobado y tu saldo ha sido actualizado.`,
+      `✔️ ¡Gracias, ${payerName}! Se acreditó tu pago (ID ${payment_id}). Tu saldo fue actualizado.`,
       phone
     );
 
-    // 5) Opcional: responder con un HTML sencillo
+    // 7) Respuesta
     res.send(`
       <html>
         <body>
           <h1>¡Pago aprobado!</h1>
-          <p>Puedes cerrar esta ventana.</p>
+          <p>Se registró a nombre de ${payerName} (${payerEmail}). Puedes cerrar esta ventana.</p>
         </body>
       </html>
     `);
-    
   } catch (error) {
     console.error("❌ Error en /mp/success:", error.message);
     res.status(500).send("Error procesando el pago.");
@@ -609,27 +629,38 @@ async function initializeIntegration() {
 
 // 📌 Ruta para desbloquear bicicleta
 app.post('/api/unlock', async (req, res) => {
-  const { imei } = req.body;
-
-  if (!imei || typeof imei !== 'string') {
-    return res.status(400).json({ message: 'IMEI inválido o no proporcionado.' });
+  const { token } = req.body;
+  
+  if (!token) {
+    return res.status(400).json({ message: 'Token de desbloqueo no proporcionado.' });
   }
 
   try {
-    // 📌 1️⃣ Obtener el token de JIMI IoT desde Firebase
-    const tokenDoc = await db.collection('tokens').doc('jimi-token').get();
+    // 1️⃣ Buscar el token en Firestore
+    const tokenRef = db.collection('unlock_tokens').doc(token);
+    const tokenDoc = await tokenRef.get();
+
     if (!tokenDoc.exists) {
-      return res.status(401).json({ message: 'Token de acceso no disponible. Intenta nuevamente.' });
+      return res.status(400).json({ message: 'Token inválido o expirado.' });
     }
 
-    const accessToken = tokenDoc.data().accessToken;
-    if (!accessToken || accessToken.trim() === '') {
-      return res.status(401).json({ message: 'Token de acceso inválido o vacío.' });
+    const { userId, bikeId, expirationTime } = tokenDoc.data();
+
+    // 2️⃣ Verificar si el token ha expirado
+    if (Date.now() > expirationTime) {
+      await tokenRef.delete();
+      return res.status(400).json({ message: 'Token expirado. Solicita uno nuevo.' });
     }
 
-    // 📌 2️⃣ Enviar la instrucción de desbloqueo a JIMI IoT
+    // 3️⃣ Obtener el token de acceso de JIMI IoT
+    const jimiTokenDoc = await db.collection('tokens').doc('jimi-token').get();
+    if (!jimiTokenDoc.exists) {
+      return res.status(401).json({ message: 'Token de acceso a JIMI no disponible. Intenta nuevamente.' });
+    }
+    const accessToken = jimiTokenDoc.data().accessToken;
+
+    // 4️⃣ Construcción del payload para desbloquear en JIMI IoT
     const commonParams = generateCommonParameters('jimi.open.instruction.send');
-
     const instParamJson = {
       inst_id: '416',
       inst_template: 'OPEN#',
@@ -640,39 +671,51 @@ app.post('/api/unlock', async (req, res) => {
     const payload = {
       ...commonParams,
       access_token: accessToken,
-      imei,
+      imei: bikeId,
       inst_param_json: JSON.stringify(instParamJson),
     };
 
+    // 5️⃣ Enviar la solicitud a JIMI IoT
     const response = await axios.post(process.env.JIMI_URL, payload, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
 
+    // 6️⃣ Verificar respuesta de JIMI IoT
     if (response.data && response.data.code === 0) {
       const result = response.data.result;
-
       if (result.includes('OPEN set OK')) {
-        // 📌 3️⃣ Marcar la bicicleta como desbloqueada en `free_bike_status`
-        const bikeRef = db.collection('free_bike_status').doc(imei);
-        await bikeRef.update({
-          is_reserved: false,  // ✅ Marcar como disponible
-          last_reported: Math.floor(Date.now() / 1000), // ✅ Actualizar timestamp
+        // 7️⃣ Marcar la bicicleta como en uso
+        const bikeRef = db.collection('free_bike_status').doc(bikeId);
+        await bikeRef.update({ is_reserved: true, last_reported: Math.floor(Date.now() / 1000) });
+
+        // Obtener ubicación de la bicicleta
+        const bikeSnapshot = await bikeRef.get();
+        const { lat, lon } = bikeSnapshot.data();
+
+        // 8️⃣ Registrar el débito en `usuarios/{userId}/debitos` (solo para trazabilidad)
+        const debitoRef = db.collection("usuarios").doc(userId).collection("debitos").doc();
+        await debitoRef.set({
+          motivo: "Desbloqueo de bicicleta",
+          status: "confirmado",
+          timestamp: new Date(),
         });
 
-        return res.status(200).json({ message: '🚲 ¡Bicicleta desbloqueada correctamente!' });
-      } else if (result.includes('OPEN command is not executed')) {
-        return res.status(200).json({ message: '⚠️ La bicicleta ya está desbloqueada.' });
+        // 9️⃣ Borrar el token de Firestore para evitar reutilización
+        await tokenRef.delete();
+
+        return res.status(200).json({ message: '🚲 ¡Bicicleta desbloqueada exitosamente!' });
       } else {
-        return res.status(500).json({ message: '❌ Respuesta desconocida del servidor.' });
+        return res.status(500).json({ message: '⚠️ No se pudo confirmar la apertura del candado.' });
       }
     } else {
-      return res.status(500).json({ message: response.data.message || '❌ Error desconocido al desbloquear.' });
+      return res.status(500).json({ message: '❌ Error en la solicitud a JIMI IoT.' });
     }
   } catch (error) {
     console.error('❌ Error al desbloquear la bicicleta:', error.message);
     return res.status(500).json({ message: '❌ Error al procesar la solicitud de desbloqueo.' });
   }
 });
+
 
 // 📌 Ruta para obtener la localización de las bicicletas en formato GBFS
 app.get('/api/bicycles', async (req, res) => {
@@ -775,28 +818,29 @@ app.get("/gbfs/system_pricing_plans.json", async (req, res) => {
 });
 
 // Generacion de tokens en el servidor para desbloquear bicicletas
-app.get('/api/token/:imei', async (req, res) => {
-  const { imei } = req.params;
+app.get('/api/token/:imei/:userId', async (req, res) => {
+  const { imei, userId } = req.params;
 
-  if (!imei) {
-    return res.status(400).json({ message: 'IMEI no proporcionado.' });
+  if (!imei || !userId) {
+    return res.status(400).json({ message: 'IMEI y userId son requeridos.' });
   }
 
   try {
-    // Generar un token numérico de 4 dígitos
-    const token = Math.floor(1000 + Math.random() * 9000); // Genera un número entre 1000 y 9999
-    const expirationTime = Date.now() + 180 * 1000; // Validez de 180 segundos
+    // Generar un token de 4 dígitos
+    const token = Math.floor(1000 + Math.random() * 9000).toString();
+    const expirationTime = Date.now() + 180 * 1000; // Expira en 3 minutos
 
-    // Guardar el token en Firestore asociado al IMEI
-    await db.collection('tokens').doc(imei).set({
-      token: token.toString(),
+    // Guardar en Firestore la relación token ↔ usuario ↔ bicicleta
+    await db.collection('unlock_tokens').doc(token).set({
+      userId,
+      bikeId: imei,
       expirationTime,
     });
 
-    res.json({ token: token.toString(), expirationTime });
+    return res.status(200).json({ token, expirationTime });
   } catch (error) {
-    console.error('Error al generar el token:', error.message);
-    res.status(500).json({ message: 'Error al generar el token.' });
+    console.error('Error generando el token de desbloqueo:', error.message);
+    return res.status(500).json({ message: 'Error al generar el token de desbloqueo.' });
   }
 });
 
@@ -804,16 +848,39 @@ app.get('/api/token/:imei', async (req, res) => {
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
-
 async function handleChatbot(userMessage) {
-  const response = await openai.createChatCompletion({
-    model: "gpt-4",
-    messages: [
-      { role: "system", content: "Eres un asistente útil para Jinete.ar." },
-      { role: "user", content: userMessage },
-    ],
-  });
-  return response.data.choices[0].message.content;
+  const systemPrompt = `
+    Eres un asistente de Soporte para Jinete.ar de la FUNDACION INICIATIVA URBANA INTELIGENTE.
+    - Responde en español.
+    - Sé breve y conciso.
+    - Si no estás seguro, sugiere escalar el caso a un humano.
+  `;
+
+  try {
+    // Versión 4.x => se usa openai.chat.completions.create(...)
+    const response = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
+      ],
+      temperature: 0.2,
+      max_tokens: 200,
+    });
+
+    // Ahora, en v4.x la respuesta se encuentra en 'response.choices'
+    if (response.choices && response.choices.length > 0) {
+      return response.choices[0].message.content;
+    } else {
+      // Manejar caso de ausencia de choices
+      return "Lo siento, no pude obtener una respuesta de OpenAI.";
+    }
+
+  } catch (error) {
+    console.error("❌ Error en OpenAI:", error.message);
+    // Respuesta de fallback
+    return "Lo siento, hubo un problema con el soporte. Intenta más tarde o contacta a un agente humano al +549-376-487-6249.";
+  }
 }
 
 app.post("/chatbot", async (req, res) => {
@@ -907,7 +974,7 @@ async function interpretUserMessageWithGPT(userMessage) {
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage }
       ],
-      temperature: 0.2
+      temperature: 0.5
     });
 
     // GPT retornará un texto JSON; intentamos parsearlo
@@ -933,7 +1000,17 @@ async function interpretUserMessageWithGPT(userMessage) {
 app.post("/webhook", async (req, res) => {
   const { Body, From } = req.body;
   if (!Body || !From) return res.status(400).json({ message: "Datos incompletos recibidos." });
+// 0) Revisar si el usuario solo escribe "hola", "hola!" o alguna variante
+const greetingRegex = /^\s*(?:hola|holi|buenas|buen\s?dia|buenos días|buenas tardes|buenas noches|hey|hi)\b[\s!.,]*$/i; 
 
+if (greetingRegex.test(Body)) {
+  await sendMessage(
+    "¡Hola! Bienvenido/a a Jinete.ar. La plataforma N°1 en LATAM para alquiler de bicicletas. " +
+    "Escribe *'Menu'* para ver las opciones o dime directamente qué necesitas.",
+    From
+  );
+  return res.status(200).send("Mensaje de bienvenida enviado");
+}
   // 1) Revisamos si el usuario ha escrito "Hola, quiero alquilar BICINAME"
   //    Ejemplo: "Hola, quiero alquilar Pegasus"
   const regexAlquilar = /hola,\s*quiero\s*alquilar\s+(.+)/i;
@@ -1027,7 +1104,7 @@ export const handleUserResponse = async (Body, From, res) => {
           return res.status(200).send("Iniciando registro");
 
           case "2": {
-            // 1) Verificar que exista un usuario en tu colección "usuarios"
+            // 1️⃣ Verificar que el usuario existe en Firestore
             const userSnap = await db.collection("usuarios").doc(From).get();
             if (!userSnap.exists) {
               await sendMessage(
@@ -1037,18 +1114,45 @@ export const handleUserResponse = async (Body, From, res) => {
               return res.status(200).send("Usuario no registrado");
             }
           
-            // 2) Verificar que el usuario tenga saldo > 0 (o el mínimo que quieras).
+            // 2️⃣ Verificar saldo suficiente
             const userData = userSnap.data();
             const saldoActual = parseFloat(userData.saldo || "0");
-            if (saldoActual <= 0) {
+          
+            // Obtener tarifa de desbloqueo
+            const planDocRef = db.collection("system_pricing_plans").doc("pricing_plans_1");
+            const planDoc = await planDocRef.get();
+          
+            if (!planDoc.exists) {
+              console.error("❌ No se encontró el plan de precios 'pricing_plans_1' en Firestore");
+              await sendMessage("Hubo un problema consultando la tarifa. Intenta más tarde o contacta Soporte.", From);
+              return res.status(200).send("Plan no encontrado");
+            }
+          
+            const planData = planDoc.data();
+            const bajadaDeBandera = parseFloat(planData.price || "500");
+          
+            if (saldoActual < bajadaDeBandera) {
               await sendMessage(
-                "No tienes saldo suficiente. Selecciona '5' para recargar saldo o escribe 'menu' para volver al menú principal.",
+                `No tienes saldo suficiente para iniciar el viaje. ` +
+                `La bajada de bandera es de ${bajadaDeBandera} ${planData.currency || "ARS"}. ` +
+                `Selecciona '5' para recargar saldo o escribe 'menu' para volver al menú principal.`,
                 From
               );
               return res.status(200).send("Saldo insuficiente");
             }
           
-            // 3) Verificar que en la sesión existan la IMEI y el nombre de la bici
+            // 3️⃣ Verificar que en la sesión existan la IMEI y el nombre de la bici
+            const sessionRef = db.collection("users_session").doc(From);
+            const sessionDoc = await sessionRef.get();
+          
+            if (!sessionDoc.exists) {
+              await sendMessage(
+                "No tienes ninguna bicicleta seleccionada. Escribe: 'Hola, quiero alquilar <nombre_bici>'.",
+                From
+              );
+              return res.status(200).send("Sesión no encontrada");
+            }
+          
             const { selectedBikeImei, selectedBikeName } = sessionDoc.data();
             if (!selectedBikeImei || !selectedBikeName) {
               await sendMessage(
@@ -1058,51 +1162,51 @@ export const handleUserResponse = async (Body, From, res) => {
               return res.status(200).send("No hay selectedBikeImei o selectedBikeName");
             }
           
-            // 4) (Opcional) Verificar en la colección free_bike_status que sea la misma bici y que no esté reservada/deshabilitada.
+            // 4️⃣ Verificar estado de la bicicleta en Firestore
             const bikeSnap = await db.collection("free_bike_status").doc(selectedBikeImei).get();
             if (!bikeSnap.exists) {
               await sendMessage(
                 "La bicicleta elegida no está disponible. Verifica el nombre o escribe 'menu' para volver al menú.",
                 From
               );
-              return res.status(200).send("Documento no existe en free_bike_status");
+              return res.status(200).send("Bicicleta no encontrada");
             }
           
             const bikeData = bikeSnap.data();
-            // Por si quieres asegurarte de que coincida el bike_id:
             if (bikeData.bike_id !== selectedBikeName) {
               await sendMessage(
-                `Parece que la bici *${selectedBikeName}* cambió o no coincide. Por favor, escribe: 'Hola, quiero alquilar <nombre_bici>'.`,
+                `Parece que la bici *${selectedBikeName}* cambió o no coincide. ` +
+                `Por favor, escribe: 'Hola, quiero alquilar <nombre_bici>'.`,
                 From
               );
               return res.status(200).send("Mismatch en bike_id");
             }
           
-            // Verificar que no esté reservada/deshabilitada
             if (bikeData.is_reserved === true || bikeData.is_disabled === true) {
               await sendMessage(
                 `Lo siento, la bicicleta *${selectedBikeName}* no está disponible en este momento.`,
                 From
               );
-              return res.status(200).send("Bici reservada o deshabilitada");
+              return res.status(200).send("Bicicleta reservada o deshabilitada");
             }
           
-            // Si todo está OK => Generar token
+            // 5️⃣ Generar token en el backend
             try {
-              const tokenURL = `${process.env.VITE_BACKEND_URL}/api/token/${selectedBikeImei}`;
+              const tokenURL = `${process.env.VITE_BACKEND_URL}/api/token/${selectedBikeImei}/${From}`;
               const response = await axios.get(tokenURL);
               const { token } = response.data;
           
-              // 5) Respuesta al usuario (sin mostrar IMEI)
+              // 6️⃣ Enviar token al usuario
               await sendMessage(
-                `Tu token de desbloqueo para la bicicleta *${selectedBikeName}* es: *${token}*\n` +
-                `Recuerda que expira en 3 minutos.\n\n¡Buen viaje!`,
+                `🔓 Tu token de desbloqueo para la bicicleta *${selectedBikeName}* es: *${token}*.\n` +
+                `🔴 *Expira en 3 minutos.*\n` +
+                `📍 Ingresa este código en la app para desbloquear la bicicleta.\n\n¡Buen viaje! 🚲`,
                 From
               );
           
               return res.status(200).send("Token enviado");
             } catch (error) {
-              console.error("Error generando token:", error.message);
+              console.error("❌ Error generando token:", error.message);
               await sendMessage(
                 "Ocurrió un problema generando tu token de desbloqueo. Escribe 'Soporte' o 'menu' para asistencia.",
                 From
@@ -1110,11 +1214,12 @@ export const handleUserResponse = async (Body, From, res) => {
               return res.status(500).send("Error generando token");
             }
           }
-          
-          
+         
         case "3": // Soporte
+          await sessionRef.update({ step: "soporte_mode" });  // guardamos que el usuario entró a Soporte
           await sendMessage("Has elegido *Soporte*. ¿En qué podemos ayudarte?", From);
           return res.status(200).send("Soporte");
+        
 
         case "4": // Ver saldo
           {
@@ -1127,7 +1232,7 @@ export const handleUserResponse = async (Body, From, res) => {
               return res.status(200).send("Usuario no registrado");
             }
             const { saldo } = userSnap.data();
-            await sendMessage(`Tu saldo actual es: *${saldo}* créditos.`, From);
+            await sendMessage(`Tu saldo actual es: *${saldo}* $.`, From);
             return res.status(200).send("Saldo consultado");
           }
 
@@ -1198,6 +1303,18 @@ export const handleUserResponse = async (Body, From, res) => {
       return res.status(200).send("Registro: Pidiendo confirmación");
     }
 
+    case "soporte_mode": {
+      try {
+        const openaiResponse = await handleChatbot(Body);
+        await sendMessage(openaiResponse, From);
+        return res.status(200).send("Soporte responded");
+      } catch (error) {
+        console.error("Error en modo soporte:", error);
+        await sendMessage("Ocurrió un error con el soporte. Escribe 'menu' para volver al inicio.", From);
+        return res.status(500).send("Soporte error");
+      }
+    }
+    
     case "confirm_data": {
       if (Body.toLowerCase() === "sí" || Body.toLowerCase() === "si") {
         const finalRegData = sessionDoc.data();
@@ -1215,7 +1332,7 @@ export const handleUserResponse = async (Body, From, res) => {
         // ⚠️ No volver a ask_bike => ahora solo confirmamos
         await sessionRef.update({ step: "menu_main" }); 
         await sendMessage(
-          "¡Registro completado exitosamente! Tu saldo inicial es 0. " +
+          "¡Registro completado exitosamente! Tu saldo inicial es 0$. " +
           "Elige '5' para recargar saldo o escribe 'menu' para ver las opciones.",
           From
         );
@@ -1298,7 +1415,6 @@ export const handleUserResponse = async (Body, From, res) => {
       await sessionRef.update({ step: "await_payment", recarga: monto });
       return res.status(200).send("Recarga solicitada, link de pago enviado");
     }
-  
     
 
     case "await_payment": {
