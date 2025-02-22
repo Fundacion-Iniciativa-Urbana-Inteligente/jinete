@@ -738,6 +738,41 @@ app.get('/api/bicycles', async (req, res) => {
   }
 });
 
+async function sendAlarmToOpenAPI(imei, alarmMessage) {
+  try {
+      const apiUrl = JIMI_URL;
+      
+      // Verificar si tenemos un access token válido
+      const tokenDoc = await db.collection('tokens').doc('jimi-token').get();
+      if (!tokenDoc.exists) {
+          console.error('❌ Error: Token de acceso de JIMI no encontrado.');
+          return { error: true, message: "Token de acceso no disponible." };
+      }
+
+      const accessToken = tokenDoc.data().accessToken;
+
+      // 📌 Construcción del payload para TracksolidPro API
+      const payload = {
+          method: "jimi.push.device.alarm",
+          access_token: accessToken,
+          imei: imei,
+          alarm_type: "bike_malfunction",
+          alarm_message: alarmMessage,
+          timestamp: new Date().toISOString().replace("T", " ").split(".")[0]
+      };
+
+      const response = await axios.post(apiUrl, payload, {
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      });
+
+      console.log("✅ Alarma enviada correctamente a OpenAPI:", response.data);
+      return response.data;
+  } catch (error) {
+      console.error("❌ Error enviando la alarma a OpenAPI:", error.response?.data || error.message);
+      return { error: true, message: "Error al enviar la alarma." };
+  }
+}
+
 
 // 📌 1️⃣ Endpoint GBFS principal (Index)
 app.get("/gbfs.json", (req, res) => {
@@ -864,7 +899,7 @@ async function handleChatbot(userMessage) {
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage },
       ],
-      temperature: 0.2,
+      temperature: 0.5,
       max_tokens: 200,
     });
 
@@ -932,64 +967,98 @@ async function sendMessage(body, to) {
 // -------------------------------------------
 async function sendMainMenu(to) {
   const text =
-    `*Menú principal*\n` +
+    `*Menú principal*\n` + // Formato de mensaje con negritas
     `1) Registro\n` +
     `2) Solicitar token de desbloqueo\n` +
     `3) Soporte\n` +
     `4) Ver saldo\n` +
     `5) Recargar saldo\n` +
-    `6) Salir\n\n` +
+    `6) Informar desperfectos \n\n` + // Opción adicional para reportar problemas
     `Para regresar a este menú en cualquier momento, escribe "Menu".`;
 
-  await sendMessage(text, to);
+  await sendMessage(text, to); // Envía el mensaje al usuario
 }
-
 async function interpretUserMessageWithGPT(userMessage) {
   try {
-    // Prompts: system + user
+    // 🔹 1️⃣ Construcción del PROMPT para el modelo GPT
     const systemPrompt = `
-      Eres un asistente especializado en el alquiler de bicicletas de Jinete.ar.
-      Tu tarea es extraer la intención del usuario y devolver la información en JSON.
-      Posibles intenciones:
-        - registro: El usuario quiere registrarse o no está en tu base de datos
-        - alquilar: El usuario quiere iniciar el alquiler de una bicicleta
-        - soporte: El usuario pide ayuda o soporte
-        - ver_saldo: El usuario quiere consultar su saldo
-        - recargar_saldo: El usuario quiere recargar saldo
-        - fallback: No estás seguro de la intención
+Eres un asistente especializado en el alquiler de bicicletas de Jinete.ar.  
+Tu tarea es analizar el mensaje del usuario, identificar su intención y devolver una respuesta estrictamente en formato JSON.  
 
-      Campos a retornar en JSON:
-      {
-        "intent": "una_de_las_intenciones_de_arriba",
-        "bikeName": "si_intent=alquilar",
-        "message": "opcional, si deseas mandar un texto final"
-      }
+Siempre que sea posible, invita al usuario a ir al **menú de opciones** escribiendo "Menu".
 
-      NO EXPLIQUES NADA, SOLO DEVUELVE ESTRICTAMENTE EL JSON.
-    `;
+---
 
+### **Posibles intenciones:**  
+- **registro**: El usuario quiere registrarse o indica que no está en la base de datos.  
+- **alquilar**: El usuario desea iniciar el alquiler de una bicicleta.  
+- **soporte**: El usuario solicita ayuda con el servicio de alquiler o tiene dudas sobre el funcionamiento de la plataforma.  
+- **ver_saldo**: El usuario quiere consultar su saldo disponible.  
+- **recargar_saldo**: El usuario quiere agregar fondos a su cuenta.  
+- **tarifas**: El usuario pregunta sobre precios, costos o cómo se cobra el servicio.  
+- **fallback**: No estás seguro de la intención o el mensaje es ambiguo.  
+
+---
+
+### **Lógica de precios**  
+Si el usuario pregunta sobre tarifas, responde con la siguiente estructura:
+
+1. **Costo del Token:** Se cobra **500 pesos argentinos** para enviar un **token único** que permite abrir el candado.  
+2. **Tarifa por minuto:** Se cobra **10 pesos por minuto de uso**, **incluso si el usuario tiene saldo insuficiente**.  
+3. **Enlace para el Token:** Si el usuario necesita un token de apertura, proporciónale este enlace:  
+   👉 **[https://jinete-ar.web.app/](https://jinete-ar.web.app/)**  
+   *⚠️ Importante: El token tiene una validez de 3 minutos antes de que expire.*  
+4. **Cierre y pago:** Cuando el usuario cierra el candado, el total se descuenta automáticamente de la **billetera Jinete**.  
+
+---
+
+### **Formato de respuesta (JSON estrictamente válido)**  
+\`\`\`json
+{
+  "intent": "una_de_las_intenciones_de_arriba",
+  "bikeName": "si_intent=alquilar, caso contrario null",
+  "message": "opcional, solo si es relevante",
+  "tokenLink": "https://jinete-ar.web.app/" // Solo si es necesario
+}
+\`\`\`
+`;
+
+    // 🔹 2️⃣ Llamado a la API de OpenAI con el PROMPT y el mensaje del usuario
     const response = await openai.createChatCompletion({
-      model: "gpt-3.5-turbo", 
+      model: "gpt-4", // Recomendado: "gpt-4" para mayor precisión
       messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage }
+        { role: "system", content: systemPrompt }, // Prompt con las instrucciones
+        { role: "user", content: userMessage } // Mensaje del usuario
       ],
-      temperature: 0.5
+      temperature: 0.2, // Se reduce la temperatura para respuestas más deterministas
+      max_tokens: 100, // Limita la longitud de la respuesta para evitar cortes
+      response_format: "json" // Fuerza la salida a formato JSON válido
     });
 
-    // GPT retornará un texto JSON; intentamos parsearlo
+    // 🔹 3️⃣ Validación de la respuesta de OpenAI
+    if (!response || !response.data || !response.data.choices || response.data.choices.length === 0) {
+      throw new Error("Respuesta de OpenAI vacía o inválida");
+    }
+
     const rawText = response.data.choices[0].message.content.trim();
 
     let parsed;
     try {
+      // Intenta parsear el JSON devuelto por GPT
       parsed = JSON.parse(rawText);
+
+      // Validación extra: verificar que la intención existe
+      if (!parsed.intent) {
+        throw new Error("La respuesta de GPT no contiene una intención válida.");
+      }
     } catch (error) {
       console.warn("GPT no devolvió JSON válido. Mensaje crudo:", rawText);
-      parsed = { intent: "fallback", message: rawText };
+      parsed = { intent: "fallback", message: rawText }; // Fallback si no es JSON válido
     }
 
     return parsed;
   } catch (error) {
+    // 🔹 4️⃣ Manejo de errores mejorado
     console.error("❌ Error interpretando mensaje con GPT:", error.message);
     return { intent: "fallback", message: "Hubo un error interpretando tu mensaje." };
   }
@@ -1241,10 +1310,35 @@ export const handleUserResponse = async (Body, From, res) => {
           await sendMessage("¿Cuánto deseas recargar en ARS?", From);
           return res.status(200).send("Iniciando recarga de saldo");
 
-        case "6": // Salir
-          await sessionRef.delete();
-          await sendMessage("¡Gracias por usar Jinete.ar! Vuelve pronto. 🙌", From);
-          return res.status(200).send("Sesión terminada");
+          case "6": // Informar desperfectos
+          // ✅ Guardamos el estado del usuario en la sesión
+          await sessionRef.set({ step: "report_issue" }, { merge: true });
+          await sendMessage("Has elegido *Informar desperfectos*. Describe el problema con la bicicleta:", From);
+          return res.status(200).send("Modo reporte de desperfectos activado");
+      
+      case "report_issue": {
+          // ✅ Recuperamos la sesión del usuario para verificar si ya está en modo reporte
+          const sessionDoc = await sessionRef.get();
+          if (!sessionDoc.exists || sessionDoc.data().step !== "report_issue") {
+              await sendMessage("No entendí. Escribe 'menu' para ver opciones.", From);
+              return res.status(200).send("Usuario fuera del contexto de reporte de desperfectos.");
+          }
+      
+          // ✅ Enviar alarma a OpenAPI de TracksolidPro
+          await sendAlarmToOpenAPI(selectedBikeImei, Body);
+      
+          await sendMessage(
+              `🚨 Se ha registrado un el error en la plataforma.\n` +
+              `Nuestro equipo de soporte ha sido notificado y revisará el problema lo antes posible. ¡Gracias por informarnos!`,
+              From
+          );
+      
+          // ✅ Reiniciamos la sesión del usuario para salir del modo "report_issue"
+          await sessionRef.set({ step: "menu" }, { merge: true });
+      
+          return res.status(200).send("Alarma enviada a OpenAPI y sesión reiniciada.");
+      }
+      
 
         default:
           // Fallback => Pide de nuevo o GPT si quieres
