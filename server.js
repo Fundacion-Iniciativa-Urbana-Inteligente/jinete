@@ -12,6 +12,7 @@ import twilio from 'twilio';
 import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
 import admin from 'firebase-admin';
 import OpenAI from "openai";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 
 
@@ -438,18 +439,29 @@ async function fetchAndStoreToken() {
 // Función para refrescar el token
 async function refreshAccessToken(refreshToken) {
   console.log('⏳ Intentando actualizar el token con refreshToken:', refreshToken);
+
   try {
+    // Verificar si el token aún es válido
+    const tokenDoc = await db.collection('tokens').doc('jimi-token').get();
+    if (tokenDoc.exists) {
+      const tokenData = tokenDoc.data();
+      const expirationTime = new Date(tokenData.time).getTime() + (tokenData.expiresIn * 1000);
+
+      if (Date.now() >= expirationTime) {
+        console.error("⚠️ El token ha expirado, obteniendo uno nuevo...");
+        return await fetchAndStoreToken(); // Generar uno nuevo si ya expiró
+      }
+    }
+
     // Generar los parámetros comunes
     const commonParams = generateCommonParameters('jimi.oauth.token.refresh');
 
-    // Parámetros privados requeridos por la API
+    // Parámetros privados (sin `access_token`)
     const privateParams = {
-      access_token: currentAccessToken, // Token de acceso actual
-      refresh_token: refreshToken,     // Token de actualización
-      expires_in: 7200,                // Duración del nuevo token en segundos (máximo permitido)
+      refresh_token: refreshToken,
+      expires_in: 7200, // Duración del nuevo token en segundos
     };
 
-    // Combinar los parámetros comunes y privados
     const requestData = { ...commonParams, ...privateParams };
 
     console.log('🔍 Parámetros de la solicitud para refresh:', requestData);
@@ -462,7 +474,7 @@ async function refreshAccessToken(refreshToken) {
     const { data } = response;
 
     if (data.code === 0 && data.result) {
-      console.log('✅ Respuesta del servidor al actualizar el token:', data);
+      console.log('✅ Token actualizado correctamente:', data.result);
 
       const tokenData = {
         appKey: data.result.appKey,
@@ -475,10 +487,10 @@ async function refreshAccessToken(refreshToken) {
 
       // Guardar el token actualizado en Firestore
       await db.collection('tokens').doc('jimi-token').set(tokenData);
-      console.log('✅ Token actualizado correctamente:', tokenData);
+      console.log('✅ Token guardado en Firestore:', tokenData);
       return tokenData;
     } else {
-      console.error('❌ Error en la respuesta del servidor al actualizar el token:', data);
+      console.error('❌ Error en la respuesta de JIMI IoT:', data);
       return null;
     }
   } catch (error) {
@@ -492,78 +504,106 @@ async function refreshAccessToken(refreshToken) {
   }
 }
 
-// 📌 Función para obtener ubicaciones y actualizar `free_bike_status` en Firestore
 async function fetchAndUpdateBikeStatus(accessToken) {
-  console.log('⏳ Obteniendo ubicaciones de bicicletas y actualizando GBFS...');
+  console.log('⏳ Iniciando fetchAndUpdateBikeStatus con accessToken:', accessToken);
 
   try {
-    // Generar parámetros para la API de JIMI IoT
+    if (!accessToken || !JIMI_USER_ID) {
+      console.error('❌ Falta accessToken o JIMI_USER_ID');
+      return false;
+    }
+
     const commonParams = generateCommonParameters('jimi.user.device.location.list');
     const privateParams = { access_token: accessToken, target: JIMI_USER_ID };
-
     const requestData = { ...commonParams, ...privateParams };
 
-    // Hacer la solicitud a JIMI IoT
+    console.log('📡 Enviando solicitud a JIMI IoT...', process.env.JIMI_URL);
+
     const response = await axios.post(process.env.JIMI_URL, requestData, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
 
-    const { data } = response;
+    console.log('📩 Respuesta de JIMI IoT recibida:', response.data);
 
-    // 📌 Verificar si la respuesta es válida
-    if (data.code !== 0 || !Array.isArray(data.result)) {
-      console.error('❌ Error en la respuesta de JIMI IoT:', data);
-      return false; // Retornar `false` si hay un error
+    const { data } = response;
+    if (!data || typeof data !== 'object' || data.code !== 0 || !data.result || !Array.isArray(data.result)) {
+      console.error('❌ Respuesta inválida de JIMI IoT:', data);
+      return false;
     }
 
     const locations = data.result;
-
-    if (locations.length === 0) {
+    if (!locations.length) {
       console.log('⚠️ No se encontraron bicicletas en JIMI IoT.');
-      return false; // Retornar `false` si no hay bicicletas
+      return false;
     }
 
     console.log(`✅ ${locations.length} bicicletas obtenidas de JIMI IoT`);
 
-    const batch = db.batch();
+    for (const location of locations) {
+      console.log(`📌 Datos recibidos de JIMI IoT para ${location.imei}:`, location);
 
-    // 📌 Convertir las actualizaciones en promesas para mejor rendimiento
-    locations.forEach((location) => {
       const docRef = db.collection('free_bike_status').doc(location.imei);
+      const existingDoc = await docRef.get();
+      let existingData = existingDoc.exists ? existingDoc.data() : {};
 
-      // 📌 Adaptamos los datos al esquema GBFS
+      // Comparar valores actuales de Firestore con los recibidos para forzar la actualización si es necesario
+      const latChanged = existingData.lat !== location.lat;
+      const lonChanged = existingData.lon !== location.lng;
+
       const bikeData = {
-        bike_id: location.deviceName || location.imei, // Si `deviceName` es null, usar IMEI
-        lat: location.lat || 0,  // Verificar valores nulos
-        lon: location.lng || 0,  // Verificar valores nulos
-        is_reserved: false,      // Valor fijo false por ahora
-        is_disabled: false,      // Valor inicial false
-        current_fuel_percent: location.batteryPowerVal ?? null, // Si no hay batería, dejar null
-        currentMileage: location.currentMileage ?? null,        // Si no hay kilometraje, dejar null
-        vehicle_type_id: "bicycle",    // Tipo de vehículo
-        last_reported: Math.floor(Date.now() / 1000), // Timestamp actualizado
+        bike_id: location.deviceName || location.imei || 'Unknown',
+        lat: location.lat, // Se asegura que es un número
+        lon: location.lng,
+        is_reserved: existingData.is_reserved ?? false,
+        is_disabled: existingData.is_disabled ?? false,
+        current_fuel_percent: location.batteryPowerVal ?? null,
+        currentMileage: location.currentMileage ?? null,
+        vehicle_type_id: "bicycle",
+        last_reported: Math.floor(Date.now() / 1000),
       };
 
-      batch.set(docRef, bikeData);
-    });
+      // Si lat o lon han cambiado, forzar la actualización con update()
+      if (latChanged || lonChanged) {
+        console.log(`🔄 Latitud o longitud cambiaron para ${location.imei}, actualizando en Firestore...`);
+        try {
+          await docRef.update({
+            lat: location.lat,
+            lon: location.lng,
+            last_reported: Math.floor(Date.now() / 1000),
+          });
+          console.log(`✅ Coordenadas actualizadas en Firestore para ${location.imei}`);
+        } catch (firestoreError) {
+          console.error(`❌ Error al actualizar Firestore para ${location.imei}:`, firestoreError.message);
+        }
+      } else {
+        console.log(`ℹ️ No hubo cambios en lat/lon para ${location.imei}, no se actualiza.`);
+      }
 
-    // 📌 Guardar en Firestore con batch.commit()
-    await batch.commit();
-    console.log('✅ Datos de bicicletas actualizados en Firestore (free_bike_status)');
+      // Actualizar otros valores con set() y merge para evitar sobreescrituras innecesarias
+      try {
+        await docRef.set(bikeData, { merge: true });
+        console.log(`✅ Datos generales actualizados en Firestore para ${location.imei}`);
+      } catch (firestoreError) {
+        console.error(`❌ Error al escribir en Firestore para ${location.imei}:`, firestoreError.message);
+      }
+    }
 
-    return true; // Retornar `true` si la actualización fue exitosa
+    console.log('✅ Todas las bicicletas han sido actualizadas correctamente en Firestore.');
+
+    return true;
   } catch (error) {
     console.error('❌ Error en la obtención de ubicaciones:', error.message);
-    return false; // Retornar `false` si hubo un error
+    return false;
   }
 }
 
-
 // Evitar duplicados
 let integrationInitialized = false;
+let intervalInitialized = false;
 
 // 📌 Inicializar proceso de actualización automática
 async function initializeIntegration() {
+  console.log("🔍 Verificando si la integración ya está inicializada...");
   if (integrationInitialized) {
     console.log("🚀 Integración ya inicializada, evitando duplicados.");
     return;
@@ -580,6 +620,11 @@ async function initializeIntegration() {
     }
 
     const tokenData = tokenDoc.data();
+    if (!tokenData.accessToken || !tokenData.refreshToken) {
+      console.error('❌ Error: Token en Firestore inválido.');
+      return;
+    }
+
     currentAccessToken = tokenData.accessToken;
     currentRefreshToken = tokenData.refreshToken;
 
@@ -588,44 +633,70 @@ async function initializeIntegration() {
       currentRefreshToken,
     });
 
+    // 📌 Iniciar la actualización periódica del token si aún no se ha hecho
+    startTokenUpdateInterval();
+
   } catch (error) {
     console.error('❌ Error al inicializar la integración:', error.message);
+  }
+}
+
+// 📌 Función para manejar la actualización automática del token
+function startTokenUpdateInterval() {
+  if (intervalInitialized) {
+    console.log("🔄 Intervalo de actualización ya en ejecución.");
     return;
   }
 
-  // 📌 Mover `setInterval()` fuera del `try` y asegurarse de que solo se ejecute una vez
+  console.log("⏳ Configurando actualización automática de tokens cada 30 segundos...");
+  intervalInitialized = true;
+
   setInterval(async () => {
-    console.log('⏳ Intentando actualizar token y obtener ubicaciones...');
+    console.log('🔄 Intervalo ejecutándose: intentando actualizar token y ubicaciones...');
+
     try {
       const tokenDoc = await db.collection('tokens').doc('jimi-token').get();
-
       if (!tokenDoc.exists) {
-        console.error('❌ Error: No se encontró el token en Firestore.');
+        console.error('❌ No se encontró el token en Firestore.');
         return;
       }
 
       const tokenData = tokenDoc.data();
-      if (!tokenData.accessToken || !tokenData.refreshToken) {
-        console.error('❌ Error: Token en Firestore inválido.');
+      if (!tokenData.accessToken || !tokenData.refreshToken || !tokenData.expiresIn || !tokenData.time) {
+        console.error('❌ Token en Firestore inválido.');
+        return;
+      }
+
+      // Verificar si el token aún es válido antes de renovarlo
+      const expirationTime = new Date(tokenData.time).getTime() + (tokenData.expiresIn * 1000);
+      if (Date.now() < expirationTime - 60 * 1000) {
+        console.log('✅ Token aún es válido, no se necesita renovación.');
         return;
       }
 
       console.log('🔄 Usando refreshToken desde Firestore:', tokenData.refreshToken);
 
       const updatedToken = await refreshAccessToken(tokenData.refreshToken);
-
-      if (updatedToken) {
-        console.log('✅ Token actualizado correctamente.');
-        await db.collection('tokens').doc('jimi-token').set(updatedToken);
-        await fetchAndUpdateBikeStatus(updatedToken.accessToken);
-      } else {
-        console.error('❌ Error al actualizar el token.');
+      if (!updatedToken || !updatedToken.accessToken) {
+        console.error('❌ No se pudo actualizar el token. Deteniendo ejecución de fetchAndUpdateBikeStatus.');
+        return;
       }
+
+      console.log('✅ Token actualizado correctamente:', updatedToken.accessToken);
+      await db.collection('tokens').doc('jimi-token').set(updatedToken);
+
+      console.log('🔄 Llamando a fetchAndUpdateBikeStatus()...');
+      await fetchAndUpdateBikeStatus(updatedToken.accessToken);
+      console.log('✅ Se ejecutó fetchAndUpdateBikeStatus correctamente.');
+
     } catch (error) {
       console.error('❌ Error en la actualización automática:', error.message);
     }
-  }, 30 * 1000); // 📌 Cada 30 segundos
+  }, 30 * 1000);
 }
+
+// 📌 Asegurar que se llame a la inicialización después de levantar el servidor
+initializeIntegration();
 
 // 📌 Ruta para desbloquear bicicleta
 app.post('/api/unlock', async (req, res) => {
@@ -879,17 +950,45 @@ app.get('/api/token/:imei/:userId', async (req, res) => {
   }
 });
 
+async function uploadImageToFirebase(imageUrl, fileName) {
+  try {
+    const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+    const buffer = Buffer.from(response.data, "binary");
+
+    const storage = getStorage();
+    const storageRef = ref(storage, `reportes/${fileName}`);
+
+    await uploadBytes(storageRef, buffer);
+    const downloadUrl = await getDownloadURL(storageRef);
+
+    console.log(`✅ Imagen subida a Firebase Storage: ${downloadUrl}`);
+    return downloadUrl;
+  } catch (error) {
+    console.error("❌ Error al subir la imagen:", error);
+    return null;
+  }
+}
+
 // Configuración de OpenAI
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 async function handleChatbot(userMessage) {
   const systemPrompt = `
-    Eres un asistente de Soporte para Jinete.ar de la FUNDACION INICIATIVA URBANA INTELIGENTE.
-    - Responde en español.
-    - Sé breve y conciso.
-    - Si no estás seguro, sugiere escalar el caso a un humano.
-  `;
+  Eres un asistente para Jinete.ar, la plataforma de alquiler de bicicletas.
+  - Responde en español.
+  - Entiende y responde preguntas sobre: registro, alquiler de bicicletas, soporte técnico, saldo y tarifas.
+  - Si el usuario menciona "tarifas", proporciona la siguiente información:
+
+    📌 *Tarifas de Jinete.ar*
+    🔹 *Costo del Token:* 500 pesos argentinos para generar un token único que permite abrir el candado.
+    🔹 *Tarifa por minuto:* 10 pesos por minuto de uso.
+    🔹 *Enlace para el Token:* [🔗 Generar Token](https://jinete-ar.web.app/)
+    
+    ⚠️ *Importante:* El token tiene una validez de 3 minutos antes de que expire.
+  
+  - Si no estás seguro, sugiere escribir 'menu' para ver las opciones disponibles.
+`;
 
   try {
     // Versión 4.x => se usa openai.chat.completions.create(...)
@@ -918,7 +1017,7 @@ async function handleChatbot(userMessage) {
   }
 }
 
-app.post("/chatbot", async (req, res) => {
+/* app.post("/chatbot", async (req, res) => {
   try {
     const { message } = req.body;
     if (!message) {
@@ -945,6 +1044,7 @@ app.post("/chatbot", async (req, res) => {
     res.status(500).json({ message: "Error en la comunicación con OpenAI." });
   }
 });
+*/
 
 // Configuracion twilio
 async function sendMessage(body, to) {
@@ -978,93 +1078,7 @@ async function sendMainMenu(to) {
 
   await sendMessage(text, to); // Envía el mensaje al usuario
 }
-async function interpretUserMessageWithGPT(userMessage) {
-  try {
-    // 🔹 1️⃣ Construcción del PROMPT para el modelo GPT
-    const systemPrompt = `
-Eres un asistente especializado en el alquiler de bicicletas de Jinete.ar.  
-Tu tarea es analizar el mensaje del usuario, identificar su intención y devolver una respuesta estrictamente en formato JSON.  
 
-Siempre que sea posible, invita al usuario a ir al **menú de opciones** escribiendo "Menu".
-
----
-
-### **Posibles intenciones:**  
-- **registro**: El usuario quiere registrarse o indica que no está en la base de datos.  
-- **alquilar**: El usuario desea iniciar el alquiler de una bicicleta.  
-- **soporte**: El usuario solicita ayuda con el servicio de alquiler o tiene dudas sobre el funcionamiento de la plataforma.  
-- **ver_saldo**: El usuario quiere consultar su saldo disponible.  
-- **recargar_saldo**: El usuario quiere agregar fondos a su cuenta.  
-- **tarifas**: El usuario pregunta sobre precios, costos o cómo se cobra el servicio.  
-- **fallback**: No estás seguro de la intención o el mensaje es ambiguo.  
-
----
-
-### **Lógica de precios**  
-Si el usuario pregunta sobre tarifas, responde con la siguiente estructura:
-
-1. **Costo del Token:** Se cobra **500 pesos argentinos** para enviar un **token único** que permite abrir el candado.  
-2. **Tarifa por minuto:** Se cobra **10 pesos por minuto de uso**, **incluso si el usuario tiene saldo insuficiente**.  
-3. **Enlace para el Token:** Si el usuario necesita un token de apertura, proporciónale este enlace:  
-   👉 **[https://jinete-ar.web.app/](https://jinete-ar.web.app/)**  
-   *⚠️ Importante: El token tiene una validez de 3 minutos antes de que expire.*  
-4. **Cierre y pago:** Cuando el usuario cierra el candado, el total se descuenta automáticamente de la **billetera Jinete**.  
-
----
-
-### **Formato de respuesta (JSON estrictamente válido)**  
-\`\`\`json
-{
-  "intent": "una_de_las_intenciones_de_arriba",
-  "bikeName": "si_intent=alquilar, caso contrario null",
-  "message": "opcional, solo si es relevante",
-  "tokenLink": "https://jinete-ar.web.app/" // Solo si es necesario
-}
-\`\`\`
-`;
-
-    // 🔹 2️⃣ Llamado a la API de OpenAI con el PROMPT y el mensaje del usuario
-    const response = await openai.createChatCompletion({
-      model: "gpt-4", // Recomendado: "gpt-4" para mayor precisión
-      messages: [
-        { role: "system", content: systemPrompt }, // Prompt con las instrucciones
-        { role: "user", content: userMessage } // Mensaje del usuario
-      ],
-      temperature: 0.2, // Se reduce la temperatura para respuestas más deterministas
-      max_tokens: 100, // Limita la longitud de la respuesta para evitar cortes
-      response_format: "json" // Fuerza la salida a formato JSON válido
-    });
-
-    // 🔹 3️⃣ Validación de la respuesta de OpenAI
-    if (!response || !response.data || !response.data.choices || response.data.choices.length === 0) {
-      throw new Error("Respuesta de OpenAI vacía o inválida");
-    }
-
-    const rawText = response.data.choices[0].message.content.trim();
-
-    let parsed;
-    try {
-      // Intenta parsear el JSON devuelto por GPT
-      parsed = JSON.parse(rawText);
-
-      // Validación extra: verificar que la intención existe
-      if (!parsed.intent) {
-        throw new Error("La respuesta de GPT no contiene una intención válida.");
-      }
-    } catch (error) {
-      console.warn("GPT no devolvió JSON válido. Mensaje crudo:", rawText);
-      parsed = { intent: "fallback", message: rawText }; // Fallback si no es JSON válido
-    }
-
-    return parsed;
-  } catch (error) {
-    // 🔹 4️⃣ Manejo de errores mejorado
-    console.error("❌ Error interpretando mensaje con GPT:", error.message);
-    return { intent: "fallback", message: "Hubo un error interpretando tu mensaje." };
-  }
-}
-
-// 📌 Webhook de WhatsApp 
 // Ejemplo de la parte "/webhook" que combina Regex + GPT + tu FSM
 app.post("/webhook", async (req, res) => {
   const { Body, From } = req.body;
@@ -1168,10 +1182,11 @@ export const handleUserResponse = async (Body, From, res) => {
       const option = Body.trim();
       switch (option) {
         case "1": // Registro
+      {
           await sessionRef.update({ step: "ask_name" });
           await sendMessage("Has elegido *Registro*. ¿Cuál es tu nombre?", From);
           return res.status(200).send("Iniciando registro");
-
+      }
           case "2": {
             // 1️⃣ Verificar que el usuario existe en Firestore
             const userSnap = await db.collection("usuarios").doc(From).get();
@@ -1285,10 +1300,11 @@ export const handleUserResponse = async (Body, From, res) => {
           }
          
         case "3": // Soporte
+        {
           await sessionRef.update({ step: "soporte_mode" });  // guardamos que el usuario entró a Soporte
           await sendMessage("Has elegido *Soporte*. ¿En qué podemos ayudarte?", From);
           return res.status(200).send("Soporte");
-        
+        }
 
         case "4": // Ver saldo
           {
@@ -1306,50 +1322,34 @@ export const handleUserResponse = async (Body, From, res) => {
           }
 
         case "5": // Recargar saldo
+        {
           await sessionRef.update({ step: "ask_recarga" });
           await sendMessage("¿Cuánto deseas recargar en ARS?", From);
           return res.status(200).send("Iniciando recarga de saldo");
-
-          case "6": // Informar desperfectos
-          // ✅ Guardamos el estado del usuario en la sesión
-          await sessionRef.set({ step: "report_issue" }, { merge: true });
-          await sendMessage("Has elegido *Informar desperfectos*. Describe el problema con la bicicleta:", From);
-          return res.status(200).send("Modo reporte de desperfectos activado");
-      
-      case "report_issue": {
-          // ✅ Recuperamos la sesión del usuario para verificar si ya está en modo reporte
-          const sessionDoc = await sessionRef.get();
-          if (!sessionDoc.exists || sessionDoc.data().step !== "report_issue") {
-              await sendMessage("No entendí. Escribe 'menu' para ver opciones.", From);
-              return res.status(200).send("Usuario fuera del contexto de reporte de desperfectos.");
-          }
-      
-          // ✅ Enviar alarma a OpenAPI de TracksolidPro
-          await sendAlarmToOpenAPI(selectedBikeImei, Body);
-      
-          await sendMessage(
-              `🚨 Se ha registrado un el error en la plataforma.\n` +
-              `Nuestro equipo de soporte ha sido notificado y revisará el problema lo antes posible. ¡Gracias por informarnos!`,
-              From
-          );
-      
-          // ✅ Reiniciamos la sesión del usuario para salir del modo "report_issue"
-          await sessionRef.set({ step: "menu" }, { merge: true });
-      
-          return res.status(200).send("Alarma enviada a OpenAPI y sesión reiniciada.");
-      }
-      
-
-        default:
-          // Fallback => Pide de nuevo o GPT si quieres
-          await sendMessage(
-            "No entendí tu opción. Por favor, elige un número del menú o escribe 'menu' para volver a mostrarlo.",
-            From
-          );
-          return res.status(200).send("Menú fallback");
-      }
+        }
+        case "6":{
+        console.log(`🟢 [DEBUG] Usuario seleccionó 6 - Iniciando reporte para: ${From}`);
+        await sessionRef.set({ step: "report_issue" }, { merge: true });
+        await sendMessage("🔧 *Reporte de desperfectos*\n\nPor favor, describe el problema que encontraste:", From);
+        return res.status(200).send("Modo reporte activado");
+        }
+          default:{
+          console.log(`⚠️ No se reconoció el mensaje: ${Body}`);
+  // Intentar interpretar el mensaje con OpenAI
+  const chatbotResponse = await handleChatbot(Body);      
+  if (chatbotResponse) {
+    await sendMessage(chatbotResponse, From);
+    return res.status(200).send("Respuesta generada por Chatbot.");
+  } else {
+    await sendMessage(
+      "No entendí tu mensaje. Escribe 'menu' para ver las opciones disponibles.",
+      From
+    );
+    return res.status(200).send("Fallback sin respuesta válida.");
+  }
+}  
     }
-
+  }
     /* -------------------------------------------------
        REGISTRO: ask_name -> ask_lastname -> ask_dni -> ask_email -> confirm_data
     ------------------------------------------------- */
@@ -1510,7 +1510,6 @@ export const handleUserResponse = async (Body, From, res) => {
       return res.status(200).send("Recarga solicitada, link de pago enviado");
     }
     
-
     case "await_payment": {
       if (Body.toLowerCase().includes("listo")) {
         // El usuario dijo "Listo, pagué"
@@ -1526,17 +1525,43 @@ export const handleUserResponse = async (Body, From, res) => {
       await sendMessage("Estamos esperando la confirmación de tu pago. Si necesitas ayuda, escribe 'Soporte'.", From);
       return res.status(200).send("Pendiente de pago");
     }
+    case "report_issue":{
+        console.log(`🟡 [DEBUG] Usuario está en report_issue - Mensaje: ${Body}`);
+      
+        // Guardar reporte en Firestore
+        const reportDoc = db.collection("reportes_desperfectos").doc();
+        const reportId = reportDoc.id;
+      
+        const reportData = {
+          reportId,
+          userId: From,
+          issue: Body,
+          status: "pendiente",
+          createdAt: new Date().toISOString(),
+        };
+      
+        await reportDoc.set(reportData);
+      
+        // Confirmar al usuario
+        await sendMessage("✅ ¡Tu reporte ha sido registrado! Nuestro equipo lo revisará pronto.", From);
+      
+        // Limpiar la sesión del usuario
+        await sessionRef.delete();
+        return res.status(200).send("Reporte registrado y confirmado");
+        }
     
-
     /* -------------------------------------------------
        DEFAULT => Fallback
     ------------------------------------------------- */
     default:
-      await sendMessage("No entendí. Escribe 'menu' para ver opciones.", From);
-      return res.status(200).send("Fallback sin step válido");
+      // Fallback => Pide de nuevo o GPT si quieres
+      await sendMessage(
+        "No entendí tu opción. Por favor, elige un número del menú o escribe 'menu' para volver a mostrarlo.",
+        From
+      );
+      return res.status(200).send("Menú fallback");
   }
 };
-
 /* 📌 Confirmar pago y enviar token de desbloqueo
 app.post('/api/payment-confirmation', async (req, res) => {
   const { email, phone } = req.body;
