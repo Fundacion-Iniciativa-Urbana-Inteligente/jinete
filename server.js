@@ -63,13 +63,26 @@ async function loadServiceAccount() {
   if (process.env.K_SERVICE) {
     // Está en Google Cloud Run
     try {
-      console.log('Detectado entorno en Google Cloud Run. Cargando credenciales desde variable de entorno...');
+      console.log('Detectado entorno en Google Cloud Run. Cargando credenciales desde Secret Manager...');
+  
+      // Verificar si la variable de entorno existe
+      if (!process.env.SERVICE_ACCOUNT_KEY) {
+          throw new Error('La variable de entorno SERVICE_ACCOUNT_KEY no está definida.');
+      }
+  
+      // Parsear la variable de entorno (que viene como un string JSON)
       serviceAccount = JSON.parse(process.env.SERVICE_ACCOUNT_KEY);
-      console.log('Credenciales cargadas exitosamente desde Secret Manager (variables de entorno).');
-    } catch (error) {
-      console.error('Error al cargar el Service Account desde la variable de entorno:', error.message);
-      process.exit(1);
-    }
+  
+      // Validar que el objeto tiene las claves necesarias
+      if (!serviceAccount.private_key || !serviceAccount.client_email) {
+          throw new Error('Las credenciales del Service Account están incompletas.');
+      }
+  
+      console.log('Credenciales cargadas exitosamente desde Secret Manager.');
+  } catch (error) {
+      console.error('Error al cargar el Service Account desde Secret Manager:', error.message);
+      process.exit(1); // Detiene la ejecución si hay un error crítico
+  }
   } else {
     // Está en local
     try {
@@ -83,7 +96,7 @@ async function loadServiceAccount() {
   }
 }
 // Llamar a la función de carga de credenciales
-loadServiceAccount();
+await loadServiceAccount();
 
   // Inicializar Firebase Admin SDK
   admin.initializeApp({
@@ -101,15 +114,7 @@ app.use(express.urlencoded({ extended: true })); // Esto procesa datos URL-encod
 app.use(express.json()); // Esto procesa datos JSON
 
 // Middleware global
-app.use(cors({
-  origin: [
-    // Agrega los orígenes que necesitas permitir
-    'https://jinete-ar.web.app',
-    'http://localhost:5173',
-  ],
-  methods: 'GET,POST,PUT,PATCH,DELETE',
-  credentials: true,
-}));
+app.use(cors());
 
 // Para parsear JSON en el body de las requests
 app.use(express.json());
@@ -398,7 +403,7 @@ async function fetchAndStoreToken() {
     const privateParams = {
       user_id: process.env.JIMI_USER_ID,
       user_pwd_md5: crypto.createHash('md5').update(process.env.JIMI_USER_PWD).digest('hex'),
-      expires_in: 7200, // Tiempo de expiración del token en segundos
+      expires_in: 600, // Tiempo de expiración del token en segundos
     };
 
     // Crear el cuerpo de la solicitud combinando parámetros comunes y privados
@@ -436,34 +441,49 @@ async function fetchAndStoreToken() {
   }
 }
 
-// Función para refrescar el token
+// Función para refrescar el token de JIMI
 async function refreshAccessToken(refreshToken) {
-  console.log('⏳ Intentando actualizar el token con refreshToken:', refreshToken);
-  try {
-    // Generar los parámetros comunes
-    const commonParams = generateCommonParameters('jimi.oauth.token.refresh');
+  // 🚨 Control de entorno: Solo Cloud Run o si está permitido en local
+  const isCloudRun = !!process.env.K_SERVICE;
+  const allowLocalRefresh = process.env.ALLOW_TOKEN_REFRESH_LOCAL === "true";
 
-    // Parámetros privados requeridos por la API
+  if (!isCloudRun && !allowLocalRefresh) {
+    console.log("⚠️ Servidor local detectado. No se renovará el token (bloqueado por seguridad).");
+    return null;
+  }
+
+  console.log(`⏳ Intentando renovar el token... (Ejecutando en ${isCloudRun ? "Cloud Run" : "Local"})`);
+
+  try {
+    if (!refreshToken) {
+      throw new Error("El token de actualización es inválido o está vacío.");
+    }
+
+    // Generar los parámetros comunes
+    const commonParams = generateCommonParameters("jimi.oauth.token.refresh");
+
+    // Parámetros requeridos por la API de JIMI
     const privateParams = {
-      access_token: currentAccessToken, // Token de acceso actual
-      refresh_token: refreshToken,     // Token de actualización
-      expires_in: 60,                // Duración del nuevo token en segundos (máximo permitido)
+      access_token: currentAccessToken || "", // Token de acceso actual
+      refresh_token: refreshToken,           // Token de actualización
+      expires_in: 3600,                      // Duración en segundos
     };
 
     // Combinar los parámetros comunes y privados
     const requestData = { ...commonParams, ...privateParams };
 
-    console.log('🔍 Parámetros de la solicitud para refresh:', requestData);
+    console.log("🔍 Enviando solicitud de refresh con datos:", requestData);
 
-    // Enviar la solicitud POST
+    // Enviar la solicitud POST a JIMI
     const response = await axios.post(process.env.JIMI_URL, requestData, {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      timeout: 5000, // Tiempo de espera máximo en milisegundos
     });
 
     const { data } = response;
 
     if (data.code === 0 && data.result) {
-      console.log('✅ Respuesta del servidor al actualizar el token:', data);
+      console.log("✅ Token actualizado correctamente en JIMI:", data.result);
 
       const tokenData = {
         appKey: data.result.appKey,
@@ -475,23 +495,24 @@ async function refreshAccessToken(refreshToken) {
       };
 
       // Guardar el token actualizado en Firestore
-      await db.collection('tokens').doc('jimi-token').set(tokenData);
-      console.log('✅ Token actualizado correctamente:', tokenData);
+      await db.collection("tokens").doc("jimi-token").set(tokenData);
+      console.log("✅ Token almacenado en Firestore.");
+
       return tokenData;
     } else {
-      console.error('❌ Error en la respuesta del servidor al actualizar el token:', data);
+      console.error("❌ Error en la respuesta del servidor al actualizar el token:", data);
       return null;
     }
   } catch (error) {
     if (error.response) {
-      console.error('❌ Error al intentar actualizar el token:', error.response.status);
-      console.error('❌ Detalles de la respuesta:', error.response.data);
+      console.error(`❌ Error HTTP (${error.response.status}):`, error.response.data);
     } else {
-      console.error('❌ Error al intentar actualizar el token:', error.message);
+      console.error("❌ Error inesperado al actualizar el token:", error.message);
     }
     return null;
   }
 }
+
 
 // Función para obtener ubicaciones de dispositivos
 async function fetchDeviceLocations(accessToken) {
@@ -549,13 +570,19 @@ async function updateFreeBikeStatus() {
     snapshot.forEach((doc) => {
       const device = doc.data();
 
+      // Intentar obtener datos previos del documento
+      const existingData = doc.data() || {};
+
       bikes.push({
-        bike_id: device.deviceName, // 0) Identificador del vehículo
-        current_fuel_percent: device.currentMileage, // 1) Kilometraje actual
-        lat: device.lat, // 2) Latitud
-        lon: device.lng, // 3) Longitud
-        current_fuel_percent: device.electQuantity, // 4) Nivel de batería
-        last_reported: Date.now(), // 5) Timestamp de actualización
+        bike_id: device.deviceName || "Desconocido",
+        current_mileage: device.currentMileage || 0,
+        lat: device.lat || 0,
+        lon: device.lng || 0,
+        current_fuel_percent: device.electQuantity || 0,
+        last_reported: Date.now(),
+        is_reserved: existingData.is_reserved ?? false,
+        is_disabled: existingData.is_disabled ?? false,
+        vehicle_type_id: "bicycle",
       });
     });
 
@@ -568,97 +595,146 @@ async function updateFreeBikeStatus() {
   }
 }
 
+
 // Evitar duplicados
 let integrationInitialized = false;
+// Evitar duplicados en los intervalos
+let bikeDataIntervalActive = false;
+let tokenRefreshIntervalActive = false;
 
-// Inicializar el proceso de actualización y consultas
 async function initializeIntegration() {
-  console.log('⏳ Inicializando integración...');
+  if (integrationInitialized) {
+    console.log("⚠️ Integración ya inicializada. Evitando duplicados...");
+    return;
+  }
+
+  console.log("⏳ Inicializando integración...");
+  integrationInitialized = true; // Marcar como inicializado
 
   try {
-    // Leer el token actual desde Firestore
-    const tokenDoc = await db.collection('tokens').doc('jimi-token').get();
+    // Leer el token actual desde Firestore antes de empezar
+    const tokenDoc = await db.collection("tokens").doc("jimi-token").get();
     if (tokenDoc.exists) {
       const tokenData = tokenDoc.data();
       currentAccessToken = tokenData.accessToken;
       currentRefreshToken = tokenData.refreshToken;
-
-      console.log('✅ Tokens cargados desde Firestore:', {
-        currentAccessToken,
-        currentRefreshToken,
-      });
     } else {
-      console.error('❌ No se encontraron tokens en Firestore.');
-      return; // Detener la inicialización si no hay tokens
+      console.error("❌ No se encontraron tokens en Firestore.");
+      return;
     }
 
-    // Iniciar el intervalo de 40 segundos
-    setInterval(async () => {
-      console.log('⏳ Intervalo iniciado: Intentando refrescar el token...');
+    // 🔄 Ejecutar actualización inicial de bicicletas y tokens
+    await bikeDataInterval();
+    await tokenRefreshInterval();
 
-      try {
-        const updatedToken = await refreshAccessToken(currentRefreshToken);
+    // 🔄 Iniciar los intervalos **solo si no están activos**
+    if (!bikeDataIntervalActive) {
+      bikeDataIntervalActive = true;
+      setInterval(bikeDataInterval, 40 * 1000);
+    }
 
-        if (updatedToken) {
-          currentAccessToken = updatedToken.accessToken;
-          currentRefreshToken = updatedToken.refreshToken;
-
-          console.log('✅ Intervalo: Token actualizado correctamente.');
-
-          // Obtener ubicaciones de dispositivos
-          await fetchDeviceLocations(currentAccessToken);
-
-          // Actualizar la colección free_bike_status
-          await updateFreeBikeStatus();
-
-          console.log('✅ Intervalo: Actualización de free_bike_status completada.');
-        } else {
-          console.error('❌ Intervalo: Error al actualizar el token.');
-        }
-      } catch (error) {
-        console.error('❌ Intervalo: Error en la actualización automática:', error.message);
-      }
-    }, 40 * 1000); // Cada 40 segundos
+    if (!tokenRefreshIntervalActive) {
+      tokenRefreshIntervalActive = true;
+      setInterval(tokenRefreshInterval, 40 * 1000);
+    }
 
   } catch (error) {
-    console.error('❌ Error al inicializar la integración:', error.message);
+    console.error("❌ Error al leer tokens de Firestore:", error.message);
+    return;
   }
 }
 
+// 🔄 Función para actualizar datos de bicicletas
+async function bikeDataInterval() {
+  console.log("⏳ Actualizando datos de bicicletas...");
+
+  try {
+    // 🟢 Recargar token desde Firestore antes de actualizar ubicaciones
+    const tokenDoc = await db.collection("tokens").doc("jimi-token").get();
+    if (tokenDoc.exists) {
+      const tokenData = tokenDoc.data();
+      currentAccessToken = tokenData.accessToken;
+      currentRefreshToken = tokenData.refreshToken;
+    }
+
+    // 🛰️ Actualizar ubicaciones y estado de bicicletas
+    await fetchDeviceLocations(currentAccessToken);
+    await updateFreeBikeStatus();
+
+    console.log("✅ Datos de bicicletas actualizados.");
+  } catch (error) {
+    console.error("❌ Error al actualizar datos de bicicletas:", error.message);
+  }
+}
+
+// 🔄 Función para actualizar el token automáticamente
+async function tokenRefreshInterval() {
+  try {
+    const isCloudRun = !!process.env.K_SERVICE;
+    const allowLocalRefresh = process.env.ALLOW_TOKEN_REFRESH_LOCAL === "true";
+
+    if (isCloudRun || allowLocalRefresh) {
+      console.log(`🔄 Intentando refrescar el token... (Ejecutando en ${isCloudRun ? "Cloud Run" : "Local"})`);
+
+      if (!currentRefreshToken) {
+        console.error("⚠️ No hay refresh token disponible. No se puede actualizar el acceso.");
+        return;
+      }
+
+      const updatedToken = await refreshAccessToken(currentRefreshToken);
+
+      if (updatedToken) {
+        currentAccessToken = updatedToken.accessToken;
+        currentRefreshToken = updatedToken.refreshToken;
+        console.log("✅ Token actualizado correctamente.");
+      } else {
+        console.error("❌ Error al actualizar el token.");
+      }
+    } else {
+      console.log("⚠️ Servidor local sin permisos: Usando token de Firestore, no se actualizará automáticamente.");
+    }
+  } catch (error) {
+    console.error("❌ Error inesperado en la actualización automática:", error.message);
+  }
+}
 
 // 📌 Ruta para desbloquear bicicleta
 app.post('/api/unlock', async (req, res) => {
-  const { token } = req.body;
-  
-  if (!token) {
-    return res.status(400).json({ message: 'Token de desbloqueo no proporcionado.' });
-  }
-
   try {
-    // 1️⃣ Buscar el token en Firestore
+    console.log("🔹 Solicitud recibida:", req.body);
+    
+    const { token } = req.body;
+    if (!token) {
+      console.log("⚠️ Token no proporcionado.");
+      return res.status(400).json({ message: 'Token de desbloqueo no proporcionado.' });
+    }
+
+    // Verificar si el token existe en Firestore
+    console.log("🔍 Buscando token en Firestore:", token);
     const tokenRef = db.collection('unlock_tokens').doc(token);
     const tokenDoc = await tokenRef.get();
-
+    
     if (!tokenDoc.exists) {
+      console.log("❌ Token inválido o expirado:", token);
       return res.status(400).json({ message: 'Token inválido o expirado.' });
     }
 
-    const { userId, bikeId, expirationTime } = tokenDoc.data();
+    console.log("✅ Token encontrado:", tokenDoc.data());
 
-    // 2️⃣ Verificar si el token ha expirado
-    if (Date.now() > expirationTime) {
-      await tokenRef.delete();
-      return res.status(400).json({ message: 'Token expirado. Solicita uno nuevo.' });
-    }
-
-    // 3️⃣ Obtener el token de acceso de JIMI IoT
+    // Verificar si el token de JIMI IoT está disponible
+    console.log("🔍 Buscando token de JIMI IoT...");
     const jimiTokenDoc = await db.collection('tokens').doc('jimi-token').get();
+    
     if (!jimiTokenDoc.exists) {
+      console.log("❌ Token de JIMI no disponible.");
       return res.status(401).json({ message: 'Token de acceso a JIMI no disponible. Intenta nuevamente.' });
     }
-    const accessToken = jimiTokenDoc.data().accessToken;
 
-    // 4️⃣ Construcción del payload para desbloquear en JIMI IoT
+    const accessToken = jimiTokenDoc.data().accessToken;
+    console.log("✅ Token de JIMI IoT obtenido.");
+
+    // Construcción del payload para JIMI IoT
+    console.log("📤 Enviando solicitud a JIMI IoT...");
     const commonParams = generateCommonParameters('jimi.open.instruction.send');
     const instParamJson = {
       inst_id: '416',
@@ -670,72 +746,38 @@ app.post('/api/unlock', async (req, res) => {
     const payload = {
       ...commonParams,
       access_token: accessToken,
-      imei: bikeId,
+      imei: tokenDoc.data().bikeId,
       inst_param_json: JSON.stringify(instParamJson),
     };
 
-    // 5️⃣ Enviar la solicitud a JIMI IoT
+    // Enviar solicitud a JIMI IoT
     const response = await axios.post(process.env.JIMI_URL, payload, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
 
-    // 6️⃣ Verificar respuesta de JIMI IoT
+    console.log("🔍 Respuesta de JIMI IoT:", response.data);
+
+    // Verificar respuesta de JIMI IoT
     if (response.data && response.data.code === 0) {
       const result = response.data.result;
       if (result.includes('OPEN set OK')) {
-        // 7️⃣ Marcar la bicicleta como en uso
-        const bikeRef = db.collection('free_bike_status').doc(bikeId);
-        await bikeRef.update({ is_reserved: true, last_reported: Math.floor(Date.now() / 1000) });
-
-        // Obtener ubicación de la bicicleta
-        const bikeSnapshot = await bikeRef.get();
-        const { lat, lon } = bikeSnapshot.data();
-
-        // 8️⃣ Registrar el débito en `usuarios/{userId}/debitos` (solo para trazabilidad)
-        const debitoRef = db.collection("usuarios").doc(userId).collection("debitos").doc();
-        await debitoRef.set({
-          motivo: "Desbloqueo de bicicleta",
-          status: "confirmado",
-          timestamp: new Date(),
-        });
-
-        // 9️⃣ Borrar el token de Firestore para evitar reutilización
-        await tokenRef.delete();
-
+        console.log("✅ Bicicleta desbloqueada correctamente.");
         return res.status(200).json({ message: '🚲 ¡Bicicleta desbloqueada exitosamente!' });
       } else {
+        console.log("⚠️ No se pudo confirmar la apertura del candado.");
         return res.status(500).json({ message: '⚠️ No se pudo confirmar la apertura del candado.' });
       }
     } else {
+      console.log("❌ Error en la solicitud a JIMI IoT.");
       return res.status(500).json({ message: '❌ Error en la solicitud a JIMI IoT.' });
     }
+
   } catch (error) {
-    console.error('❌ Error al desbloquear la bicicleta:', error.message);
-    return res.status(500).json({ message: '❌ Error al procesar la solicitud de desbloqueo.' });
+    console.error("❌ Error al procesar la solicitud de desbloqueo:", error);
+    return res.status(500).json({ message: '❌ Error al procesar la solicitud de desbloqueo.', error: error.message });
   }
 });
 
-
-// 📌 Ruta para obtener la localización de las bicicletas en formato GBFS
-app.get('/api/bicycles', async (req, res) => {
-  try {
-    const bicycles = await db.collection('free_bike_status').get();
-    
-    // Convertimos los documentos de Firestore en un array JSON
-    const result = bicycles.docs.map((doc) => doc.data());
-
-    // 📌 Formato GBFS
-    res.json({
-      last_updated: Math.floor(Date.now() / 1000),
-      ttl: 60, // Tiempo de vida del cache (en segundos)
-      data: { bikes: result }
-    });
-
-  } catch (error) {
-    console.error('❌ Error al obtener bicicletas:', error);
-    res.status(500).json({ message: 'Error al obtener bicicletas.' });
-  }
-});
 
 async function sendAlarmToOpenAPI(imei, alarmMessage) {
   try {
@@ -1571,53 +1613,43 @@ app.get("/protected-resource", (req, res) => {
   res.send("Acceso autorizado a App Check");
 });*/
 
-async function fetchAndStoreTokenIfNeeded() {
-  const tokenDoc = await db.collection('tokens').doc('jimi-token').get();
-  if (tokenDoc.exists) {
-    const tokenData = tokenDoc.data();
-    const expirationTime = new Date(tokenData.time).getTime() + (tokenData.expiresIn * 1000);
-
-    if (Date.now() < expirationTime - 60 * 1000) { // Margen de 1 minuto
-      console.log('✅ Token en Firestore aún es válido. No se necesita renovar.');
-      currentAccessToken = tokenData.accessToken;
-      currentRefreshToken = tokenData.refreshToken;
-      return tokenData;
-    }
-  }
-
-  console.log("🔄 Token vencido o no encontrado, obteniendo uno nuevo...");
-  return await fetchAndStoreToken();
-}
-
 // Middleware global para manejar errores
 app.use((err, req, res, next) => {
   console.error('❌ Error en middleware global:', err.stack);
   res.status(500).json({ message: 'Ocurrió un error inesperado.' });
 });
 
-//// Iniciar el servidor y realizar acciones iniciales
+// 🚀 Iniciar el servidor y realizar acciones iniciales
 app.listen(port, async () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${port}`);
 
-  console.log('⏳ Obteniendo token automáticamente al arrancar...');
-  const tokenData = await fetchAndStoreTokenIfNeeded();
-  
-  if (tokenData) {
-    // Actualizar variables globales para el intervalo
+  console.log("⏳ Obteniendo un nuevo token al arrancar...");
+  const newToken = await fetchAndStoreToken(); // 🔄 Siempre obtiene un nuevo token al iniciar
+
+  if (newToken) {
+    currentAccessToken = newToken.accessToken;
+    currentRefreshToken = newToken.refreshToken;
+    console.log("✅ Nuevo token obtenido y almacenado en Firestore.");
+  } else {
+    console.error("❌ Error al obtener el token al iniciar.");
+    process.exit(1); // 🚨 Si no hay token, el servidor no puede funcionar correctamente
+  }
+
+  console.log("⏳ Obteniendo token desde Firestore para manejar autenticación...");
+  const tokenDoc = await db.collection("tokens").doc("jimi-token").get();
+
+  if (tokenDoc.exists) {
+    const tokenData = tokenDoc.data();
     currentAccessToken = tokenData.accessToken;
     currentRefreshToken = tokenData.refreshToken;
-
-    console.log('✅ Token inicial obtenido y configurado.');
-
-    // Llamar a una función adicional (opcional)
-    // await fetchDeviceLocations(currentAccessToken); // Obtener ubicaciones al arrancar
-
-    // Llamar a initializeIntegration para configurar el intervalo
-    if (!integrationInitialized) {
-      integrationInitialized = true;
-      await initializeIntegration();
-    }
+    console.log("✅ Token inicial cargado desde Firestore para los siguientes ciclos.");
   } else {
-    console.error('❌ Error al obtener el token automáticamente al arrancar.');
+    console.warn("⚠️ No se encontró un token en Firestore después del primer ciclo.");
+  }
+
+  // 🔄 Llamar a initializeIntegration solo si no está en ejecución
+  if (!integrationInitialized) {
+    integrationInitialized = true;
+    await initializeIntegration();
   }
 });

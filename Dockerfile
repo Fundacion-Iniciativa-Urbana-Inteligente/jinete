@@ -23,12 +23,8 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Copiar los archivos necesarios del backend
-COPY package.json package-lock.json server.js ./ 
+COPY package.json package-lock.json server.js ./
 COPY ./src ./src
-
-# Copia los archivos de secretos
-COPY .env .env
-COPY serviceAccountKey.json serviceAccountKey.json
 
 # Instalar solo las dependencias de producción
 RUN npm install --production
@@ -36,7 +32,7 @@ RUN npm install --production
 # Copiar el build del frontend desde la etapa anterior
 COPY --from=build /app/dist ./dist
 
-# Exponer el puerto 8080 para el backend
+# Exponer el puerto 8080 para Cloud Run
 EXPOSE 8080
 
 # Comando para iniciar el servidor de Node.js
