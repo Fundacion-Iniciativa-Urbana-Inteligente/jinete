@@ -10,25 +10,24 @@ export default function Mapa() {
   const [selectedBike, setSelectedBike] = useState(null);
   const [unlockToken, setUnlockToken] = useState("");
   const [message, setMessage] = useState("");
-  const [userName, setUserName] = useState(""); // Nombre del usuario autenticado
-  const twilioPhoneNumber = "YOUR_TWILIO_PHONE_NUMBER"; // Reemplaza con tu número de Twilio
-
-  // Recuperar usuario desde localStorage
-  useEffect(() => {
-    const storedUser = localStorage.getItem("user");
-    if (storedUser) {
-      const user = JSON.parse(storedUser);
-      setUserName(user.name);
-    }
-  }, []);
 
   useEffect(() => {
     const fetchBicycles = async () => {
       try {
-        const response = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/api/bicycles`);
-        setBicycles(response.data);
+        const response = await axios.get(
+          `${import.meta.env.VITE_BACKEND_URL}/gbfs/free_bike_status.json`
+        );
+
+        if (response.data?.data?.bikes) {
+          console.log("📊 Datos recibidos para el mapa:", response.data.data.bikes);
+          setBicycles(response.data.data.bikes);
+        } else {
+          console.error("Estructura de respuesta inesperada:", response.data);
+          setBicycles([]);
+        }
       } catch (error) {
         console.error("Error al obtener bicicletas:", error);
+        setBicycles([]);
       }
     };
 
@@ -36,22 +35,17 @@ export default function Mapa() {
   }, []);
 
   const handleUnlock = async () => {
-    if (!selectedBike || !unlockToken) {
-      setMessage("Por favor selecciona una bicicleta e ingresa el token.");
+    if (!unlockToken) {
+      setMessage("Por favor ingresa el token de desbloqueo.");
       return;
     }
 
     try {
       const response = await axios.post(`${import.meta.env.VITE_BACKEND_URL}/api/unlock`, {
-        imei: selectedBike.imei,
-        enteredToken: unlockToken,
+        token: unlockToken,
       });
 
-      if (response.status === 200) {
-        setMessage(response.data.message);
-      } else {
-        setMessage(response.data.message || "Error desconocido.");
-      }
+      setMessage(response.data?.message || "Error desconocido.");
     } catch (error) {
       console.error("Error al intentar desbloquear:", error);
       setMessage("Error al intentar desbloquear.");
@@ -60,41 +54,58 @@ export default function Mapa() {
 
   return (
     <div id="mapa">
-      <MapContainer center={defaultPosition} zoom={15}>
+      <MapContainer center={defaultPosition} zoom={15} style={{ height: "80vh" }}>
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-        {bicycles.map((bike) => (
-          <Marker
-            key={bike.imei}
-            position={[bike.lat, bike.lng]}
-            eventHandlers={{
-              click: () => setSelectedBike(bike),
-            }}
-          >
-            <Popup>
-              <strong>{bike.deviceName || "Sin nombre"}</strong>
-              <br />
-              Batería: {bike.batteryPowerVal}%
-              <br />
-              <button
-                onClick={() =>
-                  (window.location.href = `https://wa.me/+14155238886?text=Hola, Soy ${userName}, quiero reservar la bicicleta ${bike.deviceName}`)
-                }
-                style={{
-                  padding: "5px 10px",
-                  backgroundColor: "#25D366",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: "5px",
-                  cursor: "pointer",
-                  marginTop: "10px",
-                }}
-              >
-                <i className="bi bi-whatsapp"></i> Reservar Bicicleta
-              </button>
-            </Popup>
-          </Marker>
-        ))}
-      </MapContainer>
+          {bicycles
+            .filter((bike) => !bike.is_disabled && !bike.is_reserved && bike.lat !== undefined && bike.lon !== undefined)
+            .map((bike) => {
+              const co2Evitado = parseFloat(bike.current_fuel_percent) * 0.21;
+
+              return (
+                <Marker key={bike.bike_id} position={[bike.lat, bike.lon]}>
+                  <Popup>
+                    <strong>{bike.bike_id}</strong>
+                    <br />
+                    TnCO2eq evitado: {co2Evitado.toFixed(2)}
+                    <br />
+                    Batería: {bike.current_fuel_percent} %
+                    <br />
+                    <button
+                      onClick={() => {
+                        const whatsappNumber = import.meta.env.VITE_TWILIO_PHONE_NUMBER;
+
+                        if (!whatsappNumber) {
+                          console.error("❌ Error: TWILIO_PHONE_NUMBER no está definido en .env");
+                          alert("Error: No se ha configurado un número de WhatsApp.");
+                          return;
+                        }
+
+                        // Eliminar prefijo 'whatsapp:' y '+'
+                        const cleanNumber = whatsappNumber.replace("whatsapp:", "").replace("+", "");
+                        const message = encodeURIComponent(`Hola, quiero alquilar ${bike.bike_id}`);
+                        const whatsappUrl = `https://wa.me/${cleanNumber}?text=${message}`;
+
+                        console.log("🔗 URL generada:", whatsappUrl);
+                        window.open(whatsappUrl, "_blank");
+                      }}
+                      style={{
+                        padding: "5px 10px",
+                        backgroundColor: "#25D366",
+                        color: "#fff",
+                        border: "none",
+                        borderRadius: "5px",
+                        cursor: "pointer",
+                        marginTop: "10px",
+                      }}
+                    >
+                      Reservar en WhatsApp
+                    </button>
+                  </Popup>
+                </Marker>
+              );
+            })}
+     </MapContainer>
+
       <footer
         style={{
           marginTop: "20px",
@@ -109,7 +120,7 @@ export default function Mapa() {
           type="text"
           value={unlockToken}
           onChange={(e) => setUnlockToken(e.target.value)}
-          placeholder="Ingresa manualmente el código recibido"
+          placeholder="Ingresa el código recibido en WhatsApp"
           style={{
             padding: "10px",
             width: "60%",
