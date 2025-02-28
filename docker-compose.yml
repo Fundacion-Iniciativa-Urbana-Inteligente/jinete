@@ -1,7 +1,10 @@
 version: '3.8'
 services:
   app:
-    image: jinetearback
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: us-central1-docker.pkg.dev/jinete-ar/jinete-ar-repo/jinete-ar-backend:latest
     ports:
       - "8080:8080"
     env_file:
