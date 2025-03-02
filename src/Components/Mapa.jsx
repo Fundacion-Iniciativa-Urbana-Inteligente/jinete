@@ -1,15 +1,29 @@
 import React, { useState, useEffect } from "react";
 import { MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
 import axios from "axios";
+import OtpInput from "react-otp-input";
 import "./Mapa.css";
+import { motion, AnimatePresence } from "framer-motion";
+import L from "leaflet";
+import jineteIcon from "./jinete.png";
+
 
 const defaultPosition = [-27.3653656, -55.8887637];
 
+const bikeIcon = L.icon({
+  iconUrl: jineteIcon, // Cambia esto por la ruta de tu icono
+  iconSize: [40, 40], // Tamaño del icono (ajústalo según necesidad)
+  iconAnchor: [20, 40], // Punto de anclaje (mitad inferior del icono)
+  popupAnchor: [0, -40] // Ajusta la posición del popup
+});
+
+
 export default function Mapa() {
   const [bicycles, setBicycles] = useState([]);
-  const [selectedBike, setSelectedBike] = useState(null);
   const [unlockToken, setUnlockToken] = useState("");
   const [message, setMessage] = useState("");
+  const [animateOtp, setAnimateOtp] = useState(false);
+  const [popupVisible, setPopupVisible] = useState(null);
 
   useEffect(() => {
     const fetchBicycles = async () => {
@@ -39,7 +53,7 @@ export default function Mapa() {
       setMessage("Por favor ingresa el token de desbloqueo.");
       return;
     }
-
+    setAnimateOtp(true);
     try {
       const response = await axios.post(`${import.meta.env.VITE_BACKEND_URL}/api/unlock`, {
         token: unlockToken,
@@ -53,16 +67,16 @@ export default function Mapa() {
   };
 
   return (
-    <div id="mapa">
+    <div id="mapa" style={{ position: "relative" }}>
       <MapContainer center={defaultPosition} zoom={15} style={{ height: "80vh" }}>
-        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <TileLayer url="https://tiles.stadiamaps.com/tiles/stamen_toner/{z}/{x}/{y}{r}.png" />
           {bicycles
             .filter((bike) => !bike.is_disabled && !bike.is_reserved && bike.lat !== undefined && bike.lon !== undefined)
             .map((bike) => {
               const co2Evitado = parseFloat(bike.current_fuel_percent) * 0.21;
 
               return (
-                <Marker key={bike.bike_id} position={[bike.lat, bike.lon]}>
+                <Marker key={bike.bike_id} position={[bike.lat, bike.lon]} icon={bikeIcon}>
                   <Popup>
                     <strong>{bike.bike_id}</strong>
                     <br />
@@ -70,7 +84,7 @@ export default function Mapa() {
                     <br />
                     Batería: {bike.current_fuel_percent} %
                     <br />
-                    <button
+                    <button class="reservar-btn"
                       onClick={() => {
                         const whatsappNumber = import.meta.env.VITE_TWILIO_PHONE_NUMBER;
 
@@ -105,42 +119,71 @@ export default function Mapa() {
               );
             })}
      </MapContainer>
-
       <footer
         style={{
-          marginTop: "20px",
-          padding: "10px",
-          backgroundColor: "#f8f9fa",
+          position: "absolute",
+          bottom: "40px",
+          left: "50%",
+          transform: "translateX(-50%)",
+          padding: "15px",
+          backgroundColor: "rgba(0, 0, 0, 0)",
           textAlign: "center",
-          borderTop: "1px solid #ddd",
+          borderRadius: "0px",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          width: "80%",
+          maxWidth: "400px",
+          zIndex: 1000,
         }}
       >
-        <h4>Ingresar Código de Desbloqueo</h4>
-        <input
-          type="text"
-          value={unlockToken}
-          onChange={(e) => setUnlockToken(e.target.value)}
-          placeholder="Ingresa el código recibido en WhatsApp"
+        <motion.button
+          onClick={handleUnlock}
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.95 }}
+          whileDrag={{ scale: 0.9, rotate: 10 }}
+          drag
           style={{
-            padding: "10px",
-            width: "60%",
+            padding: "15px 15px",
+            backgroundColor: "yellow",
+            color: "black",
+            border: "0px solid black",
+            borderRadius: "0px",
+            cursor: "pointer",
+            fontSize: "20px",
+            fontWeight: "bold",
             marginBottom: "10px",
           }}
-        />
-        <button
-          onClick={handleUnlock}
-          style={{
-            padding: "10px",
-            backgroundColor: "#28a745",
-            color: "#fff",
-            border: "none",
-            borderRadius: "5px",
-            cursor: "pointer",
-          }}
         >
-          Confirmar Código
-        </button>
-        <p style={{ color: "red" }}>{message}</p>
+          Jinete.ar
+        </motion.button>
+        
+        <motion.div
+          animate={animateOtp ? { x: 100 } : { x: 0 }}
+          transition={{ type: "spring" }}
+          style={{ display: "flex", gap: "5px" }}
+        >
+          <OtpInput
+            value={unlockToken}
+            onChange={setUnlockToken}
+            numInputs={4}
+            renderSeparator={<span> - </span>}
+            renderInput={(props, index) => <input {...props} className="otp-input-box" key={index} />}
+            shouldAutoFocus
+            containerStyle={{ display: "flex", justifyContent: "center", gap: "5px" }}
+            inputStyle={{
+              width: "50px",
+              height: "50px",
+              fontSize: "24px",
+              textAlign: "center",
+              borderRadius: "0px",
+              border: "0px solid black",
+              backgroundColor: "yellow",
+              color: "black",
+              fontWeight: "bold",
+            }}
+          />
+        </motion.div>
       </footer>
     </div>
   );

@@ -94,3 +94,62 @@
     transition: background-color 0.2s ease;
   }
 }
+
+/* Centrar en la parte superior */
+.leaflet-top.leaflet-right {
+  top: 50px !important;     /* Ajusta según tu preferencia vertical */
+  left: 50% !important;     /* Para centrar horizontalmente */
+  transform: translateX(-50%) !important;
+  right: auto !important;   /* Anulamos el "right" que pone Leaflet */
+}
+
+/* Contenedor del zoom: le quitamos fondo, sombra, etc. */
+.leaflet-control-zoom {
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+/* Botones de zoom: tamaño, colores, etc. */
+.leaflet-control-zoom-in,
+.leaflet-control-zoom-out {
+  background-color: #ffeb3b; /* Amarillo */
+  color: #000;              /* Texto negro */
+  font-weight: bold;
+  font-size: 18px;
+  border: 2px solid #000;   /* Borde negro, si deseas */
+  border-radius: 0;         /* Sin esquinas redondeadas */
+  width: 40px;              /* Ajusta según tu gusto */
+  height: 40px;
+  line-height: 40px;        /* Centrar verticalmente el símbolo */
+  text-align: center;       /* Centrar horizontalmente el símbolo */
+  text-decoration: none;
+  display: block;
+  margin: 0;               /* Quita márgenes extra */
+}
+
+.leaflet-control-zoom-in:hover,
+.leaflet-control-zoom-out:hover {
+  background-color: #fff176; /* Un amarillo un poco distinto al pasar el mouse */
+  text-decoration: none;     /* Evita subrayado */
+}
+.navbar {
+  transition: background-color 0.3s ease-in-out;
+}
+
+.navbar-toggler {
+  transition: transform 0.3s ease-in-out;
+}
+
+.navbar-toggler:hover {
+  transform: rotate(90deg);
+}
+
+.nav-link {
+  transition: transform 0.2s ease-in-out, color 0.3s ease-in-out;
+}
+
+.nav-link:hover {
+  transform: scale(1.1);
+  color: #ff5733 !important;
+}

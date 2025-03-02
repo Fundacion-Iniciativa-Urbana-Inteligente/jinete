@@ -17,6 +17,11 @@ import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 let currentAccessToken = null;
 let currentRefreshToken = null;
 
+// (1) Detectar si estamos local o en la nube 
+// (en Cloud Run, la variable de entorno K_SERVICE está definida)
+const isLocal = !process.env.K_SERVICE; 
+// Podrías usar: const isLocal = (process.env.NODE_ENV !== 'production'); 
+// o bien: const isLocal = process.env.LOCAL === 'true';
 
 // Configuración de variables de entorno locales (dotenv solo para entorno local)
 if (process.env.NODE_ENV !== 'production') {
@@ -55,7 +60,6 @@ const JIMI_URL = process.env.JIMI_URL;
 
 let serviceAccount = null;
 
-
 // Levanta el ServiceAccontKey.json
 async function loadServiceAccount() {
   if (process.env.K_SERVICE) {
@@ -77,10 +81,10 @@ async function loadServiceAccount() {
       }
   
       console.log('Credenciales cargadas exitosamente desde Secret Manager.');
-  } catch (error) {
+    } catch (error) {
       console.error('Error al cargar el Service Account desde Secret Manager:', error.message);
       process.exit(1); // Detiene la ejecución si hay un error crítico
-  }
+    }
   } else {
     // Está en local
     try {
@@ -97,17 +101,17 @@ async function loadServiceAccount() {
 // Llamar a la función de carga de credenciales
 loadServiceAccount();
 
-  // Inicializar Firebase Admin SDK
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    databaseURL: 'https://jinete-ar.firebaseio.com',
-  });
-  console.log('Firebase Admin SDK inicializado correctamente.');
+// Inicializar Firebase Admin SDK
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+  databaseURL: 'https://jinete-ar.firebaseio.com',
+});
+console.log('Firebase Admin SDK inicializado correctamente.');
 
-  // Asignar Firestore a db
-  global.db = admin.firestore(); // Usa `global` para compartir `db` en todo el archivo
-  console.log('Firestore inicializado correctamente.');
-  
+// Asignar Firestore a db
+global.db = admin.firestore(); // Usa `global` para compartir `db` en todo el archivo
+console.log('Firestore inicializado correctamente.');
+
 // Middleware para procesar datos URL-encoded y JSON
 app.use(express.urlencoded({ extended: true })); // Esto procesa datos URL-encoded
 app.use(express.json()); // Esto procesa datos JSON
@@ -135,9 +139,9 @@ app.get('/', (req, res) => {
   res.send('¡Bienvenido al backend de JineteAr! Si ves este mensaje, el servidor está corriendo correctamente.');
 });
 
-// Función para crear una preferencia de pago
-// Reemplaza tu createPreference original por esta versión
-// que NO hace throw, sino que devuelve { error: boolean, message?: string, preference?: any }
+/* -------------------------------------------------------------------------- */
+/*                  Funciones auxiliares Mercado Pago (createPreference)     */
+/* -------------------------------------------------------------------------- */
 async function createPreference(email, title, quantity, unitPrice, externalReference) {
   const idempotencyKey = randomUUID();
   const preference = new Preference(client); 
@@ -177,8 +181,9 @@ async function createPreference(email, title, quantity, unitPrice, externalRefer
   }
 }
 
-
-// Ruta para crear un pago en Mercado Pago
+// --------------------------------------------------------------------------
+// Rutas de Mercado Pago
+// --------------------------------------------------------------------------
 app.post('/api/mercadopago/create_payment', async (req, res) => {
   console.log('Solicitud para /api/mercadopago/create_payment, body:', req.body);
 
@@ -190,7 +195,11 @@ app.post('/api/mercadopago/create_payment', async (req, res) => {
   }
 
   try {
-    const preference = await createPreference(userEmail, title, quantity, unitPrice);
+    const preferenceObj = await createPreference(userEmail, title, quantity, unitPrice);
+    if (preferenceObj.error) {
+      return res.status(500).json({ message: 'Error al crear la preferencia de pago.' });
+    }
+    const preference = preferenceObj.preference;
     // Enviar al cliente el link de pago
     return res.json({ init_point: preference.init_point });
   } catch (error) {
@@ -222,8 +231,6 @@ app.get("/mp/success", async (req, res) => {
     });
 
     // 2) Llamar a la API de MP para obtener datos del pago (incluyendo info de pagador)
-    //    Tienes que usar tu access token (process.env.MERCADOPAGO_TOKEN).
-    //    La doc dice: GET /v1/payments/:id
     const mpResponse = await axios.get(
       `https://api.mercadopago.com/v1/payments/${payment_id}`,
       {
@@ -233,10 +240,7 @@ app.get("/mp/success", async (req, res) => {
       }
     );
 
-    const paymentInfo = mpResponse.data; // Este JSON tiene mucha info
-    // Por ejemplo: paymentInfo.payer.email, paymentInfo.payer.first_name, ...
-    // Ajusta según la estructura que retorne MP
-
+    const paymentInfo = mpResponse.data; 
     const payerEmail = paymentInfo?.payer?.email || "no-mail@unknown.com";
     const payerName = paymentInfo?.payer?.first_name || "Desconocido";
     const payerLastName = paymentInfo?.payer?.last_name || "";
@@ -355,6 +359,10 @@ app.get("/mp/pending", async (req, res) => {
   }
 });
 
+// --------------------------------------------------------------------------
+// Funciones auxiliares para JIMI IoT
+// --------------------------------------------------------------------------
+
 // Función para generar la firma (sign)
 function signTopRequest(params, seccode, signMethod) {
   const keys = Object.keys(params).sort(); // Ordenar las claves alfabéticamente
@@ -396,46 +404,29 @@ function generateCommonParameters(method) {
   const seccode = process.env.JIMI_APP_SECRET; // Se debe agregar esta clave secreta en el .env
   params.sign = signTopRequest(params, seccode, 'md5'); // Generar la firma con MD5
 
-  return params; // Retorna los parámetros con la firma incluida
-}
-/** 
- * Obtiene el token actual desde Firestore 
- * (usado cuando estamos en local, en lugar de llamar a la API)
- */
-async function getTokenFromFirestore() {
-  console.log("⏳ [LOCAL] Leyendo token directo desde Firestore...");
-  const tokenDoc = await db.collection('tokens').doc('jimi-token').get();
-  if (tokenDoc.exists) {
-    return tokenDoc.data(); 
-  }
-  return null;
+  return params; 
 }
 
-// Función para obtener el token automáticamente al arrancar
+/**
+ * Obtiene un token inicial y lo guarda en Firestore.
+ * Se llama una vez al arrancar (app.listen) si no hay token o si deseas forzar una obtención inicial
+ */
 async function fetchAndStoreToken() {
   console.log('⏳ Intentando obtener el token automáticamente...');
   try {
-    // Generar los parámetros comunes
     const commonParams = generateCommonParameters('jimi.oauth.token.get');
-
-    // Agregar parámetros privados
     const privateParams = {
       user_id: process.env.JIMI_USER_ID,
       user_pwd_md5: crypto.createHash('md5').update(process.env.JIMI_USER_PWD).digest('hex'),
       expires_in: 7200, // Tiempo de expiración del token en segundos
     };
-
-    // Crear el cuerpo de la solicitud combinando parámetros comunes y privados
     const requestData = { ...commonParams, ...privateParams };
 
-    // Enviar la solicitud POST
     const response = await axios.post(process.env.JIMI_URL, requestData, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
 
     const { data } = response;
-
-    // Verificar la respuesta del servidor
     if (data.code === 0 && data.result) {
       const tokenData = {
         appKey: data.result.appKey,
@@ -460,32 +451,25 @@ async function fetchAndStoreToken() {
   }
 }
 
-// Función para refrescar el token
+// Función para refrescar el token con la API externa JIMI
 async function refreshAccessToken(refreshToken) {
   console.log('⏳ Intentando actualizar el token con refreshToken:', refreshToken);
   try {
-    // Generar los parámetros comunes
     const commonParams = generateCommonParameters('jimi.oauth.token.refresh');
-
-    // Parámetros privados requeridos por la API
     const privateParams = {
       access_token: currentAccessToken, // Token de acceso actual
-      refresh_token: refreshToken,     // Token de actualización
-      expires_in: 7200,                // Duración del nuevo token en segundos (máximo permitido)
+      refresh_token: refreshToken,     
+      expires_in: 7200,                
     };
-
-    // Combinar los parámetros comunes y privados
     const requestData = { ...commonParams, ...privateParams };
 
     console.log('🔍 Parámetros de la solicitud para refresh:', requestData);
 
-    // Enviar la solicitud POST
     const response = await axios.post(process.env.JIMI_URL, requestData, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
 
     const { data } = response;
-
     if (data.code === 0 && data.result) {
       console.log('✅ Respuesta del servidor al actualizar el token:', data);
 
@@ -517,6 +501,19 @@ async function refreshAccessToken(refreshToken) {
   }
 }
 
+/** 
+ * Obtiene el token actual desde Firestore 
+ * (usado cuando estamos en local, en lugar de llamar a la API)
+ */
+async function getTokenFromFirestore() {
+  console.log("⏳ [LOCAL] Leyendo token directo desde Firestore...");
+  const tokenDoc = await db.collection('tokens').doc('jimi-token').get();
+  if (tokenDoc.exists) {
+    return tokenDoc.data(); 
+  }
+  return null;
+}
+
 // Función para obtener ubicaciones de dispositivos
 async function fetchDeviceLocations(accessToken) {
   console.log('⏳ Intentando obtener ubicaciones de dispositivos...');
@@ -534,7 +531,6 @@ async function fetchDeviceLocations(accessToken) {
     });
 
     const { data } = response;
-
     if (data.code === 0) {
       const locations = data.result;
       console.log(`✅ Ubicaciones obtenidas: ${locations.length} dispositivos`);
@@ -603,7 +599,7 @@ async function updateFreeBikeStatus() {
   }
 }
 
-// Evitar duplicados
+// Evitar doble inicialización
 let integrationInitialized = false;
 
 /**
@@ -612,7 +608,6 @@ let integrationInitialized = false;
  *   - Crea un intervalo cada 40s para refrescar token y actualizar ubicaciones.
  *   - Crea un intervalo cada 2min para checkLockStateAndFinishRides().
  */
-// Inicializar el proceso de actualización y consultas
 async function initializeIntegration() {
   console.log('⏳ Inicializando integración...');
 
@@ -673,7 +668,9 @@ async function initializeIntegration() {
   }
 }
 
-// Ruta para desbloquear bicicleta
+/* -------------------------------------------------------------------------- */
+/*                     Rutas de desbloqueo / rides  (JIMI)                    */
+/* -------------------------------------------------------------------------- */
 app.post('/api/unlock', async (req, res) => {
   try {
     console.log("🔹 Solicitud recibida:", req.body);
@@ -789,101 +786,6 @@ app.post('/api/unlock', async (req, res) => {
   }
 });
 
-
-// 📌 1️⃣ Endpoint GBFS principal (Index)
-app.get("/gbfs.json", (req, res) => {
-  res.json({
-    last_updated: Math.floor(Date.now() / 1000),
-    ttl: 60,
-    data: {
-      en: {
-        feeds: [
-          { name: "system_information", url: `${process.env.VITE_BACKEND_URL}/gbfs/system_information.json` },
-          { name: "free_bike_status", url: `${process.env.VITE_BACKEND_URL}/gbfs/free_bike_status.json` },
-          { name: "geofencing_zones", url: `${process.env.VITE_BACKEND_URL}/gbfs/geofencing_zones.json` },
-          { name: "vehicle_types", url: `${process.env.VITE_BACKEND_URL}/gbfs/vehicle_types.json` },
-          { name: "system_pricing_plans", url: `${process.env.VITE_BACKEND_URL}/gbfs/system_pricing_plans.json` }
-        ]
-      }
-    }
-  });
-});
-
-// 📌 2️⃣ Endpoint System Information
-app.get("/gbfs/system_information.json", async (req, res) => {
-  const doc = await db.collection("system_information").doc("main").get();
-  if (!doc.exists) return res.status(404).json({ error: "No encontrado" });
-  res.json({
-    last_updated: Math.floor(Date.now() / 1000),
-    ttl: 60,
-    data: doc.data(),
-  });
-});
-
-// 📌 3️⃣ Endpoint Free Bike Status (para Free-Floating)
-app.get("/gbfs/free_bike_status.json", async (req, res) => {
-  try {
-    const docRef = db.collection("free_bike_status").doc("bikes_data");
-    const docSnapshot = await docRef.get();
-
-    if (!docSnapshot.exists) {
-      return res.status(404).json({ error: "No data found" });
-    }
-
-    const data = docSnapshot.data();
-    const bikes = data.bikes || []; // Asegurarse de que siempre sea un array
-
-    res.json({
-      last_updated: Math.floor(Date.now() / 1000),
-      ttl: 60,
-      version: "2.3",
-      data: { bikes },
-    });
-  } catch (error) {
-    console.error("❌ Error al obtener el feed de Free Bike Status:", error);
-    res.status(500).json({ error: "Internal Server Error" });
-  }
-});
-
-
-// 📌 4️⃣ Endpoint Geofencing Zones
-app.get("/gbfs/geofencing_zones.json", async (req, res) => {
-  const zones = await db.collection("geofencing_zones").get();
-  const data = zones.docs.map((doc) => doc.data());
-
-  res.json({
-    last_updated: Math.floor(Date.now() / 1000),
-    ttl: 60,
-    data: { geofencing_zones: data },
-  });
-});
-
-// 📌 5️⃣ Endpoint Vehicle Types
-app.get("/gbfs/vehicle_types.json", async (req, res) => {
-  const types = await db.collection("vehicle_types").get();
-  const data = types.docs.map((doc) => doc.data());
-
-  res.json({
-    last_updated: Math.floor(Date.now() / 1000),
-    ttl: 60,
-    data: { vehicle_types: data },
-  });
-});
-
-// 📌 6️⃣ Endpoint System Pricing Plans
-app.get("/gbfs/system_pricing_plans.json", async (req, res) => {
-  const plans = await db.collection("system_pricing_plans").get();
-  const data = plans.docs.map((doc) => doc.data());
-
-  res.json({
-    last_updated: Math.floor(Date.now() / 1000),
-    ttl: 60,
-    data: { plans: data },
-  });
-});
-
-
-// Generacion de tokens en el servidor para desbloquear bicicletas
 app.get('/api/token/:imei/:userId', async (req, res) => {
   const { imei, userId } = req.params;
 
@@ -910,7 +812,9 @@ app.get('/api/token/:imei/:userId', async (req, res) => {
   }
 });
 
-// checkLockStateAndFinishRides
+// --------------------------------------------------------------------------
+// checkLockStateAndFinishRides => finaliza rides si se detecta candado cerrado
+// --------------------------------------------------------------------------
 async function checkLockStateAndFinishRides() {
   try {
     const ridesSnap = await db
@@ -960,7 +864,7 @@ async function checkLockStateAndFinishRides() {
         if (result.includes('lock state')) {
           console.log(`🔒 Se detectó candado cerrado para rideId=${rideId}. Finalizando...`);
           
-          // 5) Finalizar el viaje, pasándole también el bikeId
+          // 5) Finalizar el viaje
           await finalizeRide(rideId, userId, bikeId, startTime);
         }
       } else {
@@ -992,14 +896,12 @@ async function finalizeRide(rideId, userId, bikeId, startTime) {
       return;
     }
     const planData = planSnap.data();
-    // Estructura supuesta: { price: number, per_min_pricing: { rate: number }, currency: 'ARS' ... }
-    const basePrice = parseFloat(planData.price) || 0;      // p.ej. 500
-    const ratePerMin = parseFloat(planData.per_min_pricing.rate) || 0; // p.ej. 10
+    const basePrice = parseFloat(planData.price) || 0;      
+    const ratePerMin = parseFloat(planData.per_min_pricing.rate) || 0; 
 
     // 2) Calcular duración y costo
     const endTime = new Date();
-    const durationMinutes = Math.floor((endTime - new Date(startTime)) / 60000); // integer
-    // Ejemplo: totalCost = basePrice + (ratePerMin * duración)
+    const durationMinutes = Math.floor((endTime - new Date(startTime)) / 60000); 
     const totalCost = basePrice + (ratePerMin * durationMinutes);
 
     // 3) Leer la ubicación final de la bici en free_bike_status
@@ -1010,10 +912,8 @@ async function finalizeRide(rideId, userId, bikeId, startTime) {
       return;
     }
 
-    const data = freeBikeSnap.data(); // { bikes: [...] }
+    const data = freeBikeSnap.data(); 
     const bikesArray = data.bikes || [];
-
-    // Encontrar la bici por su bike_id
     const index = bikesArray.findIndex(b => b.bike_id === bikeId);
     if (index === -1) {
       console.error("❌ No se encontró la bicicleta en free_bike_status para obtener endLat/endLon.");
@@ -1023,9 +923,8 @@ async function finalizeRide(rideId, userId, bikeId, startTime) {
     const endLat = bikesArray[index].lat || 0;
     const endLon = bikesArray[index].lon || 0;
 
-    // Marcar la bici como disponible otra vez
+    // Liberar la bici
     bikesArray[index].is_reserved = false;
-    // Guardar el array modificado
     await freeBikeRef.update({ bikes: bikesArray });
 
     // 4) Actualizar ride => status: finalizado + posición final + duración + costo
@@ -1039,9 +938,9 @@ async function finalizeRide(rideId, userId, bikeId, startTime) {
       endLon
     });
 
-    // 5) Registrar débito en la subcolección del usuario => "usuarios/{userId}/debitos"
+    // 5) Registrar “débito” en la subcolección del usuario
     const userRef = db.collection('usuarios').doc(userId);
-    const debitosRef = userRef.collection('debitos'); // O "pagos", según prefieras
+    const debitosRef = userRef.collection('debitos');
     const newDebitoRef = debitosRef.doc(); 
     await newDebitoRef.set({
       id: newDebitoRef.id,
@@ -1049,7 +948,6 @@ async function finalizeRide(rideId, userId, bikeId, startTime) {
       amount: totalCost,
       date: endTime.toISOString(),
       concepto: "Alquiler de bicicleta"
-      // Más campos si quieres
     });
 
     // 6) Actualizar saldo del usuario
@@ -1063,8 +961,6 @@ async function finalizeRide(rideId, userId, bikeId, startTime) {
     });
 
     // 7) Notificar usuario por Twilio
-    //    (Por ejemplo, userId es su teléfono)
-    //    También podrías re-leer el saldo actualizado y mostrarlo en el mensaje
     const userSnap = await userRef.get();
     const updatedUserData = userSnap.data();
     const saldoActualizado = updatedUserData.saldo || "0";
@@ -1084,8 +980,9 @@ async function finalizeRide(rideId, userId, bikeId, startTime) {
   }
 }
 
-
-// Configuración de OpenAI
+// --------------------------------------------------------------------------
+// OpenAI Chatbot
+// --------------------------------------------------------------------------
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
@@ -1107,7 +1004,6 @@ async function handleChatbot(userMessage) {
 `;
 
   try {
-    // Versión 4.x => se usa openai.chat.completions.create(...)
     const response = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [
@@ -1118,7 +1014,6 @@ async function handleChatbot(userMessage) {
       max_tokens: 200,
     });
 
-    // Ahora, en v4.x la respuesta se encuentra en 'response.choices'
     if (response.choices && response.choices.length > 0) {
       return response.choices[0].message.content;
     } else {
@@ -1133,7 +1028,9 @@ async function handleChatbot(userMessage) {
   }
 }
 
-// Configuracion twilio
+// --------------------------------------------------------------------------
+// Twilio
+// --------------------------------------------------------------------------
 async function sendMessage(body, to) {
   try {
     const response = await twilioClient.messages.create({
@@ -1149,23 +1046,23 @@ async function sendMessage(body, to) {
   }
 }
 
-// -------------------------------------------
-// Envía el Menú Principal
-// -------------------------------------------
 async function sendMainMenu(to) {
   const text =
-    `*Menú principal*\n` + // Formato de mensaje con negritas
+    `*Menú principal*\n` +
     `1) Registro\n` +
     `2) Solicitar token de desbloqueo\n` +
     `3) Soporte\n` +
     `4) Ver saldo\n` +
     `5) Recargar saldo\n` +
-    `6) Informar desperfectos \n\n` + // Opción adicional para reportar problemas
+    `6) Informar desperfectos \n\n` +
     `Para regresar a este menú en cualquier momento, escribe "Menu".`;
 
-  await sendMessage(text, to); // Envía el mensaje al usuario
+  await sendMessage(text, to);
 }
 
+/* -------------------------------------------------------------------------- */
+/*             Lógica para Chatbot y Menú Principal (webhook)                 */
+/* -------------------------------------------------------------------------- */
 app.post("/webhook", async (req, res) => {
   const { Body, From } = req.body;
   if (!Body || !From) return res.status(400).json({ message: "Datos incompletos recibidos." });
@@ -1174,8 +1071,7 @@ app.post("/webhook", async (req, res) => {
   
   if (greetingRegex.test(Body)) {
     await sendMessage(
-      "¡Hola! Bienvenido/a a Jinete.ar." +
-      "Escribe *'Menu'* para ver las opciones o dime directamente qué necesitas.",
+      "¡Hola! Bienvenido/a a Jinete.ar. Escribe *'Menu'* para ver las opciones o dime directamente qué necesitas.",
       From
     );
     return res.status(200).send("Mensaje de bienvenida enviado");
@@ -1190,7 +1086,7 @@ app.post("/webhook", async (req, res) => {
   
     if (querySnap.empty) {
       await sendMessage(
-        `No encontré una bicicleta con el nombre "${bikeName}". Por favor, vuelve a buscar seleccionar la bicicleta en https://jinete-ar.web.app/.`,
+        `No encontré una bicicleta con el nombre "${bikeName}". Por favor, revisa en https://jinete-ar.web.app/.`,
         From
       );
       return res.status(200).send("Bike no encontrada");
@@ -1210,7 +1106,7 @@ app.post("/webhook", async (req, res) => {
     );
   
     await sendMessage(
-      `Para continuar con el alquiler de *${bikeName}*, por favor envía tu número de DNI sin puntos, solo números.`,
+      `Para continuar con el alquiler de *${bikeName}*, envía tu número de DNI sin puntos, solo números.`,
       From
     );
     return res.status(200).send("Solicitud de DNI enviada");
@@ -1226,7 +1122,7 @@ app.post("/webhook", async (req, res) => {
   
     if (userQuery.empty) {
       await sendMessage(
-        "No encontramos tu DNI en nuestra base de datos. Por favor, regístrate en https://jinete-ar.web.app/", 
+        "No encontramos tu DNI en la base de datos. Por favor, regístrate en https://jinete-ar.web.app/", 
         From
       );
       return res.status(200).send("DNI no encontrado");
@@ -1234,7 +1130,7 @@ app.post("/webhook", async (req, res) => {
   
     await sessionRef.set({ step: "menu_main" }, { merge: true });
     await sendMessage(
-      "¡DNI verificado! Puedes continuar con el alquiler. Escribe *'Menu'* para ver las opciones.",
+      "¡DNI verificado! Puedes continuar con el alquiler. Escribe *'Menu'* para ver opciones.",
       From
     );
     return res.status(200).send("DNI verificado");
@@ -1255,14 +1151,10 @@ app.post("/webhook", async (req, res) => {
   return handleUserResponse(Body, From, res);
 });
 
-// -------------------------------------------
-// Manejo de la sesión
-// -------------------------------------------
 export const handleUserResponse = async (Body, From, res) => {
   const sessionRef = db.collection("users_session").doc(From);
   const sessionDoc = await sessionRef.get();
   if (!sessionDoc.exists) {
-    // Si por algún motivo no existe la sesión
     await sendMessage("No encontré tu sesión. Escribe 'Menu' para ver opciones.", From);
     return res.status(400).json({ message: "Sesión no encontrada." });
   }
@@ -1270,184 +1162,170 @@ export const handleUserResponse = async (Body, From, res) => {
   const { step, selectedBike } = sessionDoc.data();
 
   switch (step) {
-    /* -------------------------------------------------
-       MENÚ PRINCIPAL
-    ------------------------------------------------- */
     case "menu_main": {
       const option = Body.trim();
       switch (option) {
-        case "1": // Registro
-      {
+        case "1": { // Registro
           await sessionRef.update({ step: "ask_name" });
           await sendMessage("Has elegido *Registro*. ¿Cuál es tu nombre?", From);
           return res.status(200).send("Iniciando registro");
-      }
-          case "2": {
-            // 1️⃣ Verificar que el usuario existe en Firestore
-            const userSnap = await db.collection("usuarios").doc(From).get();
-            if (!userSnap.exists) {
-              await sendMessage(
-                "No encuentro tu usuario. Elige la opción '1' para registrarte o escribe 'menu' para ver opciones.",
-                From
-              );
-              return res.status(200).send("Usuario no registrado");
-            }
-          
-            // 2️⃣ Verificar saldo suficiente
-            const userData = userSnap.data();
-            const saldoActual = parseFloat(userData.saldo || "0");
-          
-            // Obtener tarifa de desbloqueo
-            const planDocRef = db.collection("system_pricing_plans").doc("pricing_plans_1");
-            const planDoc = await planDocRef.get();
-          
-            if (!planDoc.exists) {
-              console.error("❌ No se encontró el plan de precios 'pricing_plans_1' en Firestore");
-              await sendMessage("Hubo un problema consultando la tarifa. Intenta más tarde o contacta Soporte.", From);
-              return res.status(200).send("Plan no encontrado");
-            }
-          
-            const planData = planDoc.data();
-            const bajadaDeBandera = parseFloat(planData.price || "500");
-          
-            if (saldoActual < bajadaDeBandera) {
-              await sendMessage(
-                `No tienes saldo suficiente para iniciar el viaje. ` +
-                `La bajada de bandera es de ${bajadaDeBandera} ${planData.currency || "ARS"}. ` +
-                `Selecciona '5' para recargar saldo o escribe 'menu' para volver al menú principal.`,
-                From
-              );
-              return res.status(200).send("Saldo insuficiente");
-            }
-          
-            // 3️⃣ Verificar que en la sesión existan la IMEI y el nombre de la bici
-            const sessionRef = db.collection("users_session").doc(From);
-            const sessionDoc = await sessionRef.get();
-          
-            if (!sessionDoc.exists) {
-              await sendMessage(
-                "No tienes ninguna bicicleta seleccionada. Escribe: 'Hola, quiero alquilar <nombre_bici>'.",
-                From
-              );
-              return res.status(200).send("Sesión no encontrada");
-            }
-          
-            const { selectedBikeImei, selectedBikeName } = sessionDoc.data();
-            if (!selectedBikeImei || !selectedBikeName) {
-              await sendMessage(
-                "No tienes ninguna bicicleta seleccionada. Escribe: 'Hola, quiero alquilar <nombre_bici>'.",
-                From
-              );
-              return res.status(200).send("No hay selectedBikeImei o selectedBikeName");
-            }
-          
-            // 4️⃣ Verificar estado de la bicicleta en Firestore
-            const bikeSnap = await db.collection("free_bike_status").doc(selectedBikeImei).get();
-            if (!bikeSnap.exists) {
-              await sendMessage(
-                "La bicicleta elegida no está disponible. Verifica el nombre o escribe 'menu' para volver al menú.",
-                From
-              );
-              return res.status(200).send("Bicicleta no encontrada");
-            }
-          
-            const bikeData = bikeSnap.data();
-            if (bikeData.bike_id !== selectedBikeName) {
-              await sendMessage(
-                `Parece que la bici *${selectedBikeName}* cambió o no coincide. ` +
-                `Por favor, escribe: 'Hola, quiero alquilar <nombre_bici>'.`,
-                From
-              );
-              return res.status(200).send("Mismatch en bike_id");
-            }
-          
-            if (bikeData.is_reserved === true || bikeData.is_disabled === true) {
-              await sendMessage(
-                `Lo siento, la bicicleta *${selectedBikeName}* no está disponible en este momento.`,
-                From
-              );
-              return res.status(200).send("Bicicleta reservada o deshabilitada");
-            }
-          
-            // 5️⃣ Generar token en el backend
-            try {
-              const tokenURL = `${process.env.VITE_BACKEND_URL}/api/token/${selectedBikeImei}/${From}`;
-              const response = await axios.get(tokenURL);
-              const { token } = response.data;
-          
-              // 6️⃣ Enviar token al usuario
-              await sendMessage(
-                `🔓 Tu token de desbloqueo para la bicicleta *${selectedBikeName}* es: *${token}*.\n` +
-                `🔴 *Expira en 3 minutos.*\n` +
-                `📍 Ingresa este código en la app para desbloquear la bicicleta.\n\n¡Buen viaje! 🚲`,
-                From
-              );
-          
-              return res.status(200).send("Token enviado");
-            } catch (error) {
-              console.error("❌ Error generando token:", error.message);
-              await sendMessage(
-                "Ocurrió un problema generando tu token de desbloqueo. Escribe 'Soporte' o 'menu' para asistencia.",
-                From
-              );
-              return res.status(500).send("Error generando token");
-            }
+        }
+
+        case "2": {
+          // 1) Verificar que el usuario existe en Firestore
+          const userSnap = await db.collection("usuarios").doc(From).get();
+          if (!userSnap.exists) {
+            await sendMessage(
+              "No encuentro tu usuario. Elige opción '1' para registrarte o escribe 'menu' para ver opciones.",
+              From
+            );
+            return res.status(200).send("Usuario no registrado");
           }
-         
-        case "3": // Soporte
-        {
-          await sessionRef.update({ step: "soporte_mode" });  // guardamos que el usuario entró a Soporte
+          // 2) Verificar saldo suficiente
+          const userData = userSnap.data();
+          const saldoActual = parseFloat(userData.saldo || "0");
+
+          // Obtener tarifa de desbloqueo
+          const planDocRef = db.collection("system_pricing_plans").doc("pricing_plans_1");
+          const planDoc = await planDocRef.get();
+          if (!planDoc.exists) {
+            console.error("❌ No se encontró el plan de precios 'pricing_plans_1'");
+            await sendMessage("Problema consultando la tarifa. Intenta más tarde o contacta Soporte.", From);
+            return res.status(200).send("Plan no encontrado");
+          }
+          const planData = planDoc.data();
+          const bajadaDeBandera = parseFloat(planData.price || "500");
+
+          if (saldoActual < bajadaDeBandera) {
+            await sendMessage(
+              `No tienes saldo suficiente. La bajada de bandera es de ${bajadaDeBandera} ${planData.currency || "ARS"}. ` +
+              `Selecciona '5' para recargar saldo o escribe 'menu' para el menú principal.`,
+              From
+            );
+            return res.status(200).send("Saldo insuficiente");
+          }
+
+          // 3) Verificar que la sesión contenga la bici elegida
+          const sessionRef2 = db.collection("users_session").doc(From);
+          const sessionDoc2 = await sessionRef2.get();
+          if (!sessionDoc2.exists) {
+            await sendMessage(
+              "No tienes bicicleta seleccionada. Escribe: 'Hola, quiero alquilar <nombre_bici>'.",
+              From
+            );
+            return res.status(200).send("Sesión no encontrada");
+          }
+          const { selectedBikeImei, selectedBikeName } = sessionDoc2.data();
+          if (!selectedBikeImei || !selectedBikeName) {
+            await sendMessage(
+              "No hay bicicleta seleccionada. Escribe: 'Hola, quiero alquilar <nombre_bici>'.",
+              From
+            );
+            return res.status(200).send("No hay selectedBikeImei / selectedBikeName");
+          }
+
+          // 4) Verificar estado de la bicicleta
+          const bikeSnap = await db.collection("free_bike_status").doc("bikes_data").get();
+          if (!bikeSnap.exists) {
+            await sendMessage(
+              "No se encontró la lista de bicicletas. Escribe 'menu' para el menú principal.",
+              From
+            );
+            return res.status(200).send("No bikes_data doc");
+          }
+          const bikeDataFull = bikeSnap.data();
+          const bikesArray = bikeDataFull.bikes || [];
+          const index = bikesArray.findIndex(b => b.bike_id === selectedBikeName);
+          if (index === -1) {
+            await sendMessage(
+              `No encontré la bici *${selectedBikeName}* en la lista. Verifica el nombre o escribe 'menu' para volver.`,
+              From
+            );
+            return res.status(200).send("Bici no encontrada en bikes_data");
+          }
+
+          const bikeObj = bikesArray[index];
+          if (bikeObj.is_reserved === true || bikeObj.is_disabled === true) {
+            await sendMessage(
+              `Lo siento, la bicicleta *${selectedBikeName}* no está disponible.`,
+              From
+            );
+            return res.status(200).send("Bicicleta reservada/deshabilitada");
+          }
+
+          // 5) Generar token en el backend
+          try {
+            const tokenURL = `${process.env.VITE_BACKEND_URL}/api/token/${selectedBikeImei}/${From}`;
+            const response = await axios.get(tokenURL);
+            const { token } = response.data;
+        
+            // 6) Enviar token al usuario
+            await sendMessage(
+              `🔓 Tu token de desbloqueo para la bicicleta *${selectedBikeName}* es: *${token}*.\n` +
+              `🔴 *Expira en 3 minutos.*\n` +
+              `¡Buen viaje! 🚲`,
+              From
+            );
+            return res.status(200).send("Token enviado");
+          } catch (error) {
+            console.error("❌ Error generando token:", error.message);
+            await sendMessage(
+              "Hubo un problema generando el token de desbloqueo. Escribe 'Soporte' o 'menu' para volver.",
+              From
+            );
+            return res.status(500).send("Error generando token");
+          }
+        }
+
+        case "3": {
+          await sessionRef.update({ step: "soporte_mode" });
           await sendMessage("Has elegido *Soporte*. ¿En qué podemos ayudarte?", From);
           return res.status(200).send("Soporte");
         }
 
-        case "4": // Ver saldo
-          {
-            const userSnap = await db.collection("usuarios").doc(From).get();
-            if (!userSnap.exists) {
-              await sendMessage(
-                "No encuentro tu usuario. Selecciona '1' para registrarte o escribe 'menu' para ver opciones.",
-                From
-              );
-              return res.status(200).send("Usuario no registrado");
-            }
-            const { saldo } = userSnap.data();
-            await sendMessage(`Tu saldo actual es: *${saldo}* $.`, From);
-            return res.status(200).send("Saldo consultado");
+        case "4": {
+          const userSnap = await db.collection("usuarios").doc(From).get();
+          if (!userSnap.exists) {
+            await sendMessage(
+              "No encuentro tu usuario. Opción '1' para registrarte o 'menu' para opciones.",
+              From
+            );
+            return res.status(200).send("Usuario no registrado");
           }
+          const { saldo } = userSnap.data();
+          await sendMessage(`Tu saldo actual es: *${saldo}* $.`, From);
+          return res.status(200).send("Saldo consultado");
+        }
 
-        case "5": // Recargar saldo
-        {
+        case "5": {
           await sessionRef.update({ step: "ask_recarga" });
           await sendMessage("¿Cuánto deseas recargar en ARS?", From);
           return res.status(200).send("Iniciando recarga de saldo");
         }
-        case "6":{
-        console.log(`🟢 [DEBUG] Usuario seleccionó 6 - Iniciando reporte para: ${From}`);
-        await sessionRef.set({ step: "report_issue" }, { merge: true });
-        await sendMessage("🔧 *Reporte de desperfectos*\n\nPor favor, describe el problema que encontraste:", From);
-        return res.status(200).send("Modo reporte activado");
+
+        case "6": {
+          console.log(`🟢 [DEBUG] Opción 6 - Iniciando reporte para: ${From}`);
+          await sessionRef.set({ step: "report_issue" }, { merge: true });
+          await sendMessage("🔧 *Reporte de desperfectos*\n\nDescribe el problema encontrado:", From);
+          return res.status(200).send("Modo reporte activado");
         }
-          default:{
+
+        default: {
           console.log(`⚠️ No se reconoció el mensaje: ${Body}`);
-  // Intentar interpretar el mensaje con OpenAI
-  const chatbotResponse = await handleChatbot(Body);      
-  if (chatbotResponse) {
-    await sendMessage(chatbotResponse, From);
-    return res.status(200).send("Respuesta generada por Chatbot.");
-  } else {
-    await sendMessage(
-      "No entendí tu mensaje. Escribe 'menu' para ver las opciones disponibles.",
-      From
-    );
-    return res.status(200).send("Fallback sin respuesta válida.");
-  }
-}  
+          const chatbotResponse = await handleChatbot(Body);      
+          if (chatbotResponse) {
+            await sendMessage(chatbotResponse, From);
+            return res.status(200).send("Respuesta generada por Chatbot.");
+          } else {
+            await sendMessage(
+              "No entendí tu mensaje. Escribe 'menu' para ver opciones.",
+              From
+            );
+            return res.status(200).send("Fallback sin respuesta válida.");
+          }
+        }
+      }
     }
-  }
-    /* -------------------------------------------------
-       REGISTRO: ask_name -> ask_lastname -> ask_dni -> ask_email -> confirm_data
-    ------------------------------------------------- */
 
     case "ask_name": {
       await sessionRef.update({ step: "ask_lastname", name: Body });
@@ -1464,7 +1342,7 @@ export const handleUserResponse = async (Body, From, res) => {
     case "ask_dni": {
       if (!/^\d+$/.test(Body)) {
         await sendMessage("Por favor ingresa solo números para el DNI:", From);
-        return res.status(200).send("DNI no válido, pidiendo nuevamente");
+        return res.status(200).send("DNI no válido");
       }
       await sessionRef.update({ step: "ask_email", dni: Body });
       await sendMessage("Ahora ingresa tu *correo electrónico*:", From);
@@ -1474,12 +1352,10 @@ export const handleUserResponse = async (Body, From, res) => {
     case "ask_email": {
       if (!/\S+@\S+\.\S+/.test(Body)) {
         await sendMessage("Correo electrónico inválido. Intenta nuevamente:", From);
-        return res.status(200).send("Email no válido, pidiendo nuevamente");
+        return res.status(200).send("Email no válido");
       }
-
-      // Guardamos y pedimos confirmación
       await sessionRef.update({ step: "confirm_data", email: Body });
-      const regData = sessionDoc.data(); // Ojo: sessionDoc no se ha refrescado automáticamente, tal vez conviene recargarlo
+      const regData = sessionDoc.data(); 
       await sendMessage(
         `Por favor, confirma tus datos:\n\n` +
         `Nombre: ${regData.name}\n` +
@@ -1499,7 +1375,7 @@ export const handleUserResponse = async (Body, From, res) => {
         return res.status(200).send("Soporte responded");
       } catch (error) {
         console.error("Error en modo soporte:", error);
-        await sendMessage("Ocurrió un error con el soporte. Escribe 'menu' para volver al inicio.", From);
+        await sendMessage("Ocurrió un error con el soporte. Escribe 'menu' para reiniciar.", From);
         return res.status(500).send("Soporte error");
       }
     }
@@ -1507,27 +1383,21 @@ export const handleUserResponse = async (Body, From, res) => {
     case "confirm_data": {
       if (Body.toLowerCase() === "sí" || Body.toLowerCase() === "si") {
         const finalRegData = sessionDoc.data();
-
-        // Guardar en col "usuarios"
         await db.collection("usuarios").doc(From).set({
           name: finalRegData.name,
           lastName: finalRegData.lastName,
           dni: finalRegData.dni,
           email: finalRegData.email,
-          saldo: "0",     // Por defecto
-          validado: true, // Cambiar si quieres
+          saldo: "0",
+          validado: true,
         });
-
-        // ⚠️ No volver a ask_bike => ahora solo confirmamos
         await sessionRef.update({ step: "menu_main" }); 
         await sendMessage(
-          "¡Registro completado exitosamente! Tu saldo inicial es 0$. " +
-          "Elige '5' para recargar saldo o escribe 'menu' para ver las opciones.",
+          "¡Registro completado! Tu saldo inicial es 0$. Escribe '5' para recargar o 'menu' para opciones.",
           From
         );
         return res.status(200).send("Registro completado");
       } else if (Body.toLowerCase() === "no") {
-        // Cancelar
         await sessionRef.delete();
         await sendMessage("Registro cancelado. Escribe 'menu' para comenzar de nuevo.", From);
         return res.status(200).send("Registro cancelado");
@@ -1537,16 +1407,12 @@ export const handleUserResponse = async (Body, From, res) => {
       }
     }
 
-    /* -------------------------------------------------
-       RECARGAR SALDO (opción 5)
-    ------------------------------------------------- */
     case "ask_recarga": {
       const monto = parseFloat(Body);
       if (isNaN(monto)) {
         await sendMessage("Por favor, ingresa un monto numérico. Ej: 500", From);
         return res.status(200).send("Monto inválido");
       }
-    
       // 1) Buscar el usuario y su email
       const userSnap = await db.collection("usuarios").doc(From).get();
       if (!userSnap.exists) {
@@ -1555,32 +1421,28 @@ export const handleUserResponse = async (Body, From, res) => {
       }
       const userData = userSnap.data();
       const userEmail = userData.email || "soporte@jinete.ar"; 
-    
       // 2) Creamos un doc en la subcolección "pagos"
       const pagosRef = db.collection("usuarios").doc(From).collection("pagos");
       const newPaymentDoc = pagosRef.doc();
       const docId = newPaymentDoc.id;
-    
-      // 3) Creamos la preferencia => 'external_reference': { phone, docId }
+      // 3) Creamos la preferencia => 'external_reference'
       const result = await createPreference(
         userEmail, 
         "Recarga de saldo", 
         1, 
         monto, 
-        { phone: From, docId }  // <-- external_reference
+        { phone: From, docId }
       );
-    
       if (result.error) {
         await sendMessage(
-          "No pude generar el link de pago. Inténtalo más tarde o escribe 'menu' para volver.",
+          "No pude generar el link de pago. Inténtalo más tarde o escribe 'menu'.",
           From
         );
         return res.status(200).send("Error al crear preferencia MP");
       }
-    
       const preference = result.preference;
       const initPoint = preference.init_point;
-    
+
       // 4) Guardamos "pending" en Firestore
       await newPaymentDoc.set({
         amount: monto,
@@ -1592,100 +1454,63 @@ export const handleUserResponse = async (Body, From, res) => {
         timestamp: new Date().toISOString(),
         initPoint,
       });
-    
+
       // 5) Enviamos el link al usuario
       await sendMessage(
-        `Aquí tienes tu link de pago por *${monto} ARS*:\n${initPoint}\n` + 
-        `¡Paga y volverás automáticamente a confirmación!`,
+        `Link de pago por *${monto} ARS*:\n${initPoint}\n` + 
+        `¡Paga y automáticamente se procesará la recarga!`,
         From
       );
-    
       // 6) Cambiamos el step a "await_payment"
       await sessionRef.update({ step: "await_payment", recarga: monto });
-      return res.status(200).send("Recarga solicitada, link de pago enviado");
+      return res.status(200).send("Recarga solicitada");
     }
-    
+
     case "await_payment": {
       if (Body.toLowerCase().includes("listo")) {
-        // El usuario dijo "Listo, pagué"
-        // OPCIONAL: 1) Verificar con la API de Mercado Pago el estado real
-        // 2) Si 'approved', actualizas en Firestore y sumas saldo
-    
-        await sendMessage("Vamos a verificar el estado de tu pago. Un momento...", From);
-        
-        // (O esperas a que un webhook actualice la DB)
-        return res.status(200).send("El usuario dice que pagó, a confirmar...");
+        await sendMessage("Verificaremos el estado de tu pago. Un momento...", From);
+        return res.status(200).send("Usuario dice que pagó");
       }
-    
-      await sendMessage("Estamos esperando la confirmación de tu pago. Si necesitas ayuda, escribe 'Soporte'.", From);
+      await sendMessage("Aguardando confirmación de tu pago. Escribe 'Soporte' o 'menu' si lo necesitas.", From);
       return res.status(200).send("Pendiente de pago");
     }
-    case "report_issue":{
-        console.log(`🟡 [DEBUG] Usuario está en report_issue - Mensaje: ${Body}`);
-      
-        // Guardar reporte en Firestore
-        const reportDoc = db.collection("reportes_desperfectos").doc();
-        const reportId = reportDoc.id;
-      
-        const reportData = {
-          reportId,
-          userId: From,
-          issue: Body,
-          status: "pendiente",
-          createdAt: new Date().toISOString(),
-        };
-      
-        await reportDoc.set(reportData);
-      
-        // Confirmar al usuario
-        await sendMessage("✅ ¡Tu reporte ha sido registrado! Nuestro equipo lo revisará pronto.", From);
-      
-        // Limpiar la sesión del usuario
-        await sessionRef.delete();
-        return res.status(200).send("Reporte registrado y confirmado");
-        }
-    
-    /* -------------------------------------------------
-       DEFAULT => Fallback
-    ------------------------------------------------- */
+
+    case "report_issue": {
+      console.log(`🟡 [DEBUG] Usuario en report_issue - Mensaje: ${Body}`);
+      const reportDoc = db.collection("reportes_desperfectos").doc();
+      const reportId = reportDoc.id;
+      const reportData = {
+        reportId,
+        userId: From,
+        issue: Body,
+        status: "pendiente",
+        createdAt: new Date().toISOString(),
+      };
+      await reportDoc.set(reportData);
+      await sendMessage("✅ ¡Reporte registrado! Nuestro equipo lo revisará.", From);
+      await sessionRef.delete();
+      return res.status(200).send("Reporte guardado");
+    }
+
     default:
-      // Fallback => Pide de nuevo o GPT si quieres
       await sendMessage(
-        "No entendí tu opción. Por favor, elige un número del menú o escribe 'menu' para volver a mostrarlo.",
+        "No entendí tu opción. Escribe 'menu' para ver las opciones.",
         From
       );
       return res.status(200).send("Menú fallback");
   }
 };
-/* 📌 Confirmar pago y enviar token de desbloqueo
-app.post('/api/payment-confirmation', async (req, res) => {
-  const { email, phone } = req.body;
-  const userRef = db.collection('usuarios').doc(phone);
-  const userDoc = await userRef.get();
 
-  if (!userDoc.exists) return res.status(400).json({ message: "Usuario no encontrado." });
-
-  await userRef.update({ validado: true });
-
-  const token = Math.floor(1000 + Math.random() * 9000);
-  await db.collection('tokens').doc(phone).set({ token: token.toString(), expiresAt: Date.now() + 180000 });
-
-  await twilioClient.messages.create({ body: `🔓 Tu código de desbloqueo es: ${token}. Expira en 3 minutos.`, from: process.env.TWILIO_PHONE_NUMBER, to: phone });
-
-  res.json({ message: "Pago confirmado y token enviado." });
-});*/
-
-//Stautus de twilio Callback
+// --------------------------------------------------------------------------
+// Ruta de estatus Twilio (opcional)
 app.post('/api/twilio/status', (req, res) => {
   console.log("📦 Estado del mensaje recibido:", req.body);
   res.sendStatus(200);
 });
 
-
-// Usar la función en una ruta
+// Ruta para enviar mensaje manualmente
 app.post('/api/send-message', async (req, res) => {
   const { body, to } = req.body;
-
   if (!body || !to) {
     return res.status(400).json({ message: 'Faltan parámetros requeridos: body o to.' });
   }
@@ -1699,81 +1524,24 @@ app.post('/api/send-message', async (req, res) => {
   }
 });
 
-//Stautus de twilio Callback
-app.post('/api/twilio/status', (req, res) => {
-  console.log("📦 Estado del mensaje recibido:", req.body);
-  res.sendStatus(200);
-});
-
-
-// Usar la función en una ruta
-app.post('/api/send-message', async (req, res) => {
-  const { body, to } = req.body;
-
-  if (!body || !to) {
-    return res.status(400).json({ message: 'Faltan parámetros requeridos: body o to.' });
-  }
-
-  try {
-    await sendMessage(body, to);
-    res.status(200).json({ message: 'Mensaje enviado correctamente.' });
-  } catch (error) {
-    console.error('Error al enviar el mensaje:', error.message);
-    res.status(500).json({ message: 'Error al enviar el mensaje.' });
-  }
-});
-
-
-// Configuracion de Appcheck
-/* app.use(async (req, res, next) => {
-  const appCheckToken = req.header("X-Firebase-AppCheck");
-
-  if (!appCheckToken) {
-    return res.status(401).send("App Check token missing");
-  }
-
-  try {
-    // Verifica el token de App Check
-    const appCheckClaims = await admin.appCheck().verifyToken(appCheckToken);
-    console.log("App Check token verified:", appCheckClaims);
-    next(); // Continúa con la solicitud
-  } catch (error) {
-    console.error("App Check token invalid:", error);
-    res.status(403).send("Unauthorized");
-  }
-});
-
-// Define tus rutas
-app.get("/protected-resource", (req, res) => {
-  res.send("Acceso autorizado a App Check");
-});*/
-
-
-
-// Middleware global para manejar errores
-app.use((err, req, res, next) => {
-  console.error('❌ Error en middleware global:', err.stack);
-  res.status(500).json({ message: 'Ocurrió un error inesperado.' });
-});
-
-//// Iniciar el servidor y realizar acciones iniciales
+// --------------------------------------------------------------------------
+// Iniciar el servidor y realizar acciones iniciales
+// --------------------------------------------------------------------------
 app.listen(port, async () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${port}`);
 
   console.log('⏳ Obteniendo token automáticamente al arrancar...');
-  const tokenData = await fetchAndStoreToken(); // Llamar a la función para obtener el token automáticamente
+  const tokenData = await fetchAndStoreToken();
 
   if (tokenData) {
-    // Actualizar variables globales para el intervalo
     currentAccessToken = tokenData.accessToken;
     currentRefreshToken = tokenData.refreshToken;
-
     console.log('✅ Token inicial obtenido y configurado.');
 
-    // Llamar a una función adicional (opcional)
-    await fetchDeviceLocations(currentAccessToken); // Obtener ubicaciones al arrancar
+    // Obtener ubicaciones al arrancar
+    await fetchDeviceLocations(currentAccessToken);
 
-    // Llamar a initializeIntegration para configurar el intervalo
+    // Iniciar integración (intervalos)
     await initializeIntegration();
   } else {
     console.error('❌ Error al obtener el token automáticamente al arrancar.');
