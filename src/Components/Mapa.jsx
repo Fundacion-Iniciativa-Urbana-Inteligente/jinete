@@ -6,6 +6,7 @@ import "./Mapa.css";
 import { motion, AnimatePresence } from "framer-motion";
 import L from "leaflet";
 import jineteIcon from "./jinete.png";
+import { store } from 'react-notifications-component';
 
 
 const defaultPosition = [-27.3653656, -55.8887637];
@@ -48,21 +49,63 @@ export default function Mapa() {
     fetchBicycles();
   }, []);
 
+  // ...
   const handleUnlock = async () => {
     if (!unlockToken) {
-      setMessage("Por favor ingresa el token de desbloqueo.");
+      // Notificas error por falta de token
+      store.addNotification({
+        title: 'Advertencia',
+        message: 'Por favor ingresa el token de desbloqueo.',
+        type: 'warning',
+        container: 'top-center',       // <<-- 'top-center' según tu CSS
+        insert: 'top',
+        animationIn: ['animate__animated', 'animate__flipInX'],
+        animationOut: ['animate__animated', 'animate__flipOutX'],
+        dismiss: {
+          duration: 3000,
+          onScreen: true,
+        },
+      });
+  
       return;
     }
+  
     setAnimateOtp(true);
+  
     try {
-      const response = await axios.post(`${import.meta.env.VITE_BACKEND_URL}/api/unlock`, {
-        token: unlockToken,
+      const response = await axios.post(
+        `${import.meta.env.VITE_BACKEND_URL}/api/unlock`,
+        { token: unlockToken }
+      );
+  
+      store.addNotification({
+        title: '¡Desbloqueo exitoso!',
+        message: response.data?.message || 'Operación completada',
+        type: 'success',
+        container: 'top-center',
+        insert: 'top',
+        animationIn: ['animate__animated', 'animate__flipInX'],
+        animationOut: ['animate__animated', 'animate__flipOutX'],
+        dismiss: {
+          duration: 3000,
+          onScreen: true,
+        },
       });
-
-      setMessage(response.data?.message || "Error desconocido.");
     } catch (error) {
-      console.error("Error al intentar desbloquear:", error);
-      setMessage("Error al intentar desbloquear.");
+      // Error
+      store.addNotification({
+        title: 'Error al intentar desbloquear',
+        message: error.response?.data?.message || 'Error desconocido',
+        type: 'warning',  // O 'danger', si prefieres
+        container: 'top-center',
+        insert: 'top',
+        animationIn: ['animate__animated', 'animate__flipInX'],
+        animationOut: ['animate__animated', 'animate__flipOutX'],
+        dismiss: {
+          duration: 5000,
+          onScreen: true,
+        },
+      });
     }
   };
 
@@ -84,7 +127,8 @@ export default function Mapa() {
                     <br />
                     Batería: {bike.current_fuel_percent} %
                     <br />
-                    <button class="reservar-btn"
+                    <button className="reservar-btn"
+
                       onClick={() => {
                         const whatsappNumber = import.meta.env.VITE_TWILIO_PHONE_NUMBER;
 
