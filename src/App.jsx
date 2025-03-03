@@ -19,7 +19,6 @@ const FooterWrapper = () => {
 function App() {
   return (
       <Router>
-        <Menu />
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/helpme" element={<Helpme />} />

@@ -6,7 +6,7 @@ import "./Mapa.css";
 import { motion, AnimatePresence } from "framer-motion";
 import L from "leaflet";
 import jineteIcon from "./jinete.png";
-import { store } from 'react-notifications-component';
+import { toast } from 'react-toastify';
 
 
 const defaultPosition = [-27.3653656, -55.8887637];
@@ -52,62 +52,39 @@ export default function Mapa() {
   // ...
   const handleUnlock = async () => {
     if (!unlockToken) {
-      // Notificas error por falta de token
-      store.addNotification({
-        title: 'Advertencia',
-        message: 'Por favor ingresa el token de desbloqueo.',
-        type: 'warning',
-        container: 'top-center',       // <<-- 'top-center' según tu CSS
-        insert: 'top',
-        animationIn: ['animate__animated', 'animate__flipInX'],
-        animationOut: ['animate__animated', 'animate__flipOutX'],
-        dismiss: {
-          duration: 3000,
-          onScreen: true,
-        },
+      toast.warn('Por favor ingresa el token de desbloqueo.', {
+        position: 'top-center',
+        autoClose: 3000,
+        hideProgressBar: false,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
+        progress: undefined,
+        theme: 'colored',
       });
-  
       return;
     }
-  
-    setAnimateOtp(true);
-  
+    
     try {
       const response = await axios.post(
         `${import.meta.env.VITE_BACKEND_URL}/api/unlock`,
         { token: unlockToken }
       );
-  
-      store.addNotification({
-        title: '¡Desbloqueo exitoso!',
-        message: response.data?.message || 'Operación completada',
-        type: 'success',
-        container: 'top-center',
-        insert: 'top',
-        animationIn: ['animate__animated', 'animate__flipInX'],
-        animationOut: ['animate__animated', 'animate__flipOutX'],
-        dismiss: {
-          duration: 3000,
-          onScreen: true,
-        },
+    
+      toast.success(response.data?.message || '¡Desbloqueo exitoso!', {
+        position: 'top-center',
+        autoClose: 3000,
+        theme: 'colored',
       });
     } catch (error) {
-      // Error
-      store.addNotification({
-        title: 'Error al intentar desbloquear',
-        message: error.response?.data?.message || 'Error desconocido',
-        type: 'warning',  // O 'danger', si prefieres
-        container: 'top-center',
-        insert: 'top',
-        animationIn: ['animate__animated', 'animate__flipInX'],
-        animationOut: ['animate__animated', 'animate__flipOutX'],
-        dismiss: {
-          duration: 5000,
-          onScreen: true,
-        },
+      toast.error(error.response?.data?.message || 'Error desconocido', {
+        position: 'top-center',
+        autoClose: 5000,
+        theme: 'colored',
       });
     }
   };
+    
 
   return (
     <div id="mapa" style={{ position: "relative" }}>
@@ -121,7 +98,7 @@ export default function Mapa() {
               return (
                 <Marker key={bike.bike_id} position={[bike.lat, bike.lon]} icon={bikeIcon}>
                   <Popup>
-                    <strong>{bike.bike_id}</strong>
+                    <h2>{bike.bike_id}</h2>
                     <br />
                     TnCO2eq evitado: {co2Evitado.toFixed(2)}
                     <br />
@@ -166,27 +143,28 @@ export default function Mapa() {
       <footer
         style={{
           position: "absolute",
-          bottom: "40px",
+          bottom: "50px",
           left: "50%",
           transform: "translateX(-50%)",
-          padding: "15px",
-          backgroundColor: "rgba(0, 0, 0, 0)",
+          padding: "18px",
+          backgroundColor: "rgba(0, 0, 0, 0.5)",
           textAlign: "center",
           borderRadius: "0px",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           width: "80%",
-          maxWidth: "400px",
+          maxWidth: "290px",
           zIndex: 1000,
         }}
       >
+             <h3 style={{ margin: "0 0 10px 0", fontSize: "19px", fontWeight: "bold", color: "white" }}>
+              Ingrese código de desbloqueo
+            </h3>
         <motion.button
           onClick={handleUnlock}
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.95 }}
-          whileDrag={{ scale: 0.9, rotate: 10 }}
-          drag
+          whileHover={{ scale: 1.2 }}
+          whileTap={{ scale: 0.90 }}
           style={{
             padding: "15px 15px",
             backgroundColor: "yellow",
@@ -203,8 +181,9 @@ export default function Mapa() {
         </motion.button>
         
         <motion.div
-          animate={animateOtp ? { x: 100 } : { x: 0 }}
-          transition={{ type: "spring" }}
+          key={animateOtp ? "animado" : "inicial"} // Solo cambia cuando se activa
+          animate={animateOtp ? { x: [0, 100, 0] } : {}} // Solo se anima cuando se activa
+          transition={animateOtp ? { type: "tween", duration: 0.5, ease: "easeInOut" } : {}}
           style={{ display: "flex", gap: "5px" }}
         >
           <OtpInput
@@ -228,6 +207,7 @@ export default function Mapa() {
             }}
           />
         </motion.div>
+
       </footer>
     </div>
   );
