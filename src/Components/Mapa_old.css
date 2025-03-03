@@ -1,7 +1,3 @@
-body {
-  font-family: 'Roboto', sans-serif;
-}
-
 .leaflet-popup-content-wrapper {
   background: yellow !important;
   color: black !important; /* Cambia el color del texto para que sea visible */

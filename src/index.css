@@ -63,3 +63,18 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 }
+.progress-bar {
+  position: absolute;
+  bottom: 10px;
+  width: 75%;
+  height: 8px;
+  background-color: #4a5568;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.progress-bar div {
+  height: 100%;
+  background-color: #48bb78;
+  transition: width 1s linear;
+}

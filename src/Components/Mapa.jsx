@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import L from "leaflet";
 import jineteIcon from "./jinete.png";
 import { toast } from 'react-toastify';
-
+import { useNavigate } from "react-router-dom";  // Importar navegación
 
 const defaultPosition = [-27.3653656, -55.8887637];
 
@@ -25,6 +25,7 @@ export default function Mapa() {
   const [message, setMessage] = useState("");
   const [animateOtp, setAnimateOtp] = useState(false);
   const [popupVisible, setPopupVisible] = useState(null);
+  const navigate = useNavigate();  // Definir función de navegación
 
   useEffect(() => {
     const fetchBicycles = async () => {
@@ -89,7 +90,32 @@ export default function Mapa() {
   return (
     <div id="mapa" style={{ position: "relative" }}>
       <MapContainer center={defaultPosition} zoom={15} style={{ height: "80vh" }}>
-        <TileLayer url="https://tiles.stadiamaps.com/tiles/stamen_toner/{z}/{x}/{y}{r}.png" />
+        <TileLayer
+          url="https://tiles.stadiamaps.com/tiles/stamen_toner/{z}/{x}/{y}{r}.png"
+          attribution='&copy; <a href="https://stamen.com/">Stamen Design</a> | Map tiles by <a href="https://stadiamaps.com/">Stadia Maps</a> | Data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        />
+              {/* BOTÓN RANKINGS - TOP LEFT */}
+      <motion.button
+        onClick={() => navigate("./ranking")} // Redirigir a la página de rankings
+        whileHover={{ scale: 1.2 }}
+        whileTap={{ scale: 0.9 }}
+        style={{
+          position: "absolute",
+          top: "10px",
+          right: "10px",
+          padding: "15px",
+          backgroundColor: "yellow",
+          color: "black",
+          border: "2px solid black",
+          borderRadius: "0px",
+          cursor: "pointer",
+          fontSize: "18px",
+          fontWeight: "bold",
+          zIndex: 1000, // Asegura que esté sobre el mapa
+        }}
+      >
+        RANKING
+      </motion.button>
           {bicycles
             .filter((bike) => !bike.is_disabled && !bike.is_reserved && bike.lat !== undefined && bike.lon !== undefined)
             .map((bike) => {
@@ -169,7 +195,7 @@ export default function Mapa() {
             padding: "15px 15px",
             backgroundColor: "yellow",
             color: "black",
-            border: "0px solid black",
+            border: "2px solid black",
             borderRadius: "0px",
             cursor: "pointer",
             fontSize: "20px",
@@ -200,7 +226,7 @@ export default function Mapa() {
               fontSize: "24px",
               textAlign: "center",
               borderRadius: "0px",
-              border: "0px solid black",
+              border: "2px solid black",
               backgroundColor: "yellow",
               color: "black",
               fontWeight: "bold",
