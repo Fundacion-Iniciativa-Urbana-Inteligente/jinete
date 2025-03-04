@@ -5,7 +5,7 @@ import OtpInput from "react-otp-input";
 import "./Mapa.css";
 import { motion, AnimatePresence } from "framer-motion";
 import L from "leaflet";
-import jineteIcon from "./jinete.png";
+import jineteIcon from "./jinete.svg";
 import { toast } from 'react-toastify';
 import { useNavigate } from "react-router-dom";  // Importar navegación
 
@@ -109,7 +109,7 @@ export default function Mapa() {
           border: "2px solid black",
           borderRadius: "0px",
           cursor: "pointer",
-          fontSize: "18px",
+          fontSize: "22px",
           fontWeight: "bold",
           zIndex: 1000, // Asegura que esté sobre el mapa
         }}
@@ -233,7 +233,6 @@ export default function Mapa() {
             }}
           />
         </motion.div>
-
       </footer>
     </div>
   );

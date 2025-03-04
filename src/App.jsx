@@ -1,39 +1,36 @@
 import { BrowserRouter as Router, Routes, Route, useLocation } from "react-router-dom";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import "./App.css";
 import Home from "./Pages/Home";
 import NotFound from "./Pages/NotFound";
 import RankingPage from "./Components/RankingPage";
-import Footer from "./Components/Footer";
 import Mapa from "./Components/Mapa";
-import Loader from "./Components/Loader"; // Importamos el Loader
+import Loader from "./Components/Loader";
 import "bootstrap/dist/css/bootstrap.min.css";
 
-// Componente para renderizar el Footer condicionalmente
-const FooterWrapper = () => {
-  const location = useLocation();
-  const showFooter = location.pathname !== "/" && location.pathname !== "/map";
-  
-  return showFooter ? <Footer /> : null;
-};
 
 function App() {
   const [loading, setLoading] = useState(true);
 
+  useEffect(() => {
+    // Simulamos la carga de la app (puedes ajustarlo según sea necesario)
+    const timer = setTimeout(() => setLoading(false), 3000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (loading) {
+    return <Loader onLoadingComplete={() => setLoading(false)} />;
+  }
+
   return (
-    <>
-      {loading && <Loader onLoadingComplete={() => setLoading(false)} />}
-      {!loading && (
-        <Router>
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/ranking" element={<RankingPage />} />
-            <Route path="/map" element={<Mapa />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </Router>
-      )}
-    </>
+    <Router>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/ranking" element={<RankingPage />} />
+        <Route path="/map" element={<Mapa />} />
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </Router>
   );
 }
 

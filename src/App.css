@@ -1,8 +1,5 @@
-body {
-  font-family: 'Roboto', sans-serif;
-}
-
 #root {
+  background-color: black !important; /* Asegura que la web mantenga el fondo negro */
   margin: 0 auto;
   text-align: center;
   min-height: 100vh;

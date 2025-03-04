@@ -14,8 +14,8 @@ const RankingPage = () => {
 
   const [companyRanking, setCompanyRanking] = useState([
     { id: 1, nombre: "Empresa A", co2eq: 12.5 },
-    { id: 2, nombre: "Empresa B", co2eq: 9.1 },
-    { id: 3, nombre: "Empresa C", co2eq: 7.8 },
+    { id: 2, nombre: "Municipio B", co2eq: 9.1 },
+    { id: 3, nombre: "Colegio C", co2eq: 7.8 },
   ]);
 
   const canvasRef = useRef(null);
@@ -26,7 +26,6 @@ const RankingPage = () => {
     setUserRanking(sortedUsers);
     setCompanyRanking(sortedCompanies);
   }, []);
-
 
   useEffect(() => {
     let renderer, scene, camera;
@@ -95,7 +94,7 @@ const RankingPage = () => {
     <div style={styles.pageContainer}>
       <canvas ref={canvasRef} style={styles.canvas}></canvas>
       <div style={styles.content}>
-        <h2>Ranking de Usuarios</h2>
+        <h2>Ranking de Jinetes</h2>
         <table style={styles.table}>
           <thead>
             <tr>
@@ -114,7 +113,7 @@ const RankingPage = () => {
             ))}
           </tbody>
         </table>
-        <h2>Ranking de Empresas</h2>
+        <h2>Ranking de Fundadores</h2>
         <table style={styles.table}>
           <thead>
             <tr>
@@ -146,15 +145,8 @@ const styles = {
     height: "100vh",
     overflow: "hidden",
     zIndex: 0,
-    backgroundColor: "#FFD700", // Amarillo Jinete.ar
-  },
-  canvas: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    width: "100%",
-    height: "100%",
-    zIndex: -1,
+    backgroundColor: "#FFD700",
+    fontFamily: "'Source Sans Pro', sans-serif", // Aplicar la fuente globalmente
   },
   content: {
     position: "absolute",
@@ -162,29 +154,30 @@ const styles = {
     left: "50%",
     transform: "translate(-50%, -50%)",
     zIndex: 1,
-    backgroundColor: "rgba(255, 255, 255, 0.6)",
+    backgroundColor: "rgba(255, 255, 255, 0.9)",
     padding: "2rem",
     borderRadius: "10px",
     maxWidth: "800px",
     textAlign: "center",
-    color: "black", // Texto negro como el botón de Jinete.ar
+    color: "black",
+    fontFamily: "'Source Sans Pro', sans-serif", // Aplicar al contenido
   },
   table: {
     width: "100%",
     borderCollapse: "collapse",
     marginTop: "1rem",
+    fontFamily: "'Source Sans Pro', sans-serif", // Aplicar a la tabla
   },
   th: {
     borderBottom: "2px solid black",
     padding: "0.5rem",
     fontWeight: "bold",
+    fontFamily: "'Source Sans Pro', sans-serif",
   },
   td: {
     borderBottom: "1px solid black",
     padding: "0.5rem",
-  },
-  tr: {
-    backgroundColor: "rgba(255, 255, 255, 0.8)",
+    fontFamily: "'Source Sans Pro', sans-serif",
   },
   button: {
     marginTop: "1rem",
@@ -196,6 +189,7 @@ const styles = {
     border: "none",
     borderRadius: "5px",
     cursor: "pointer",
+    fontFamily: "'Source Sans Pro', sans-serif",
   },
 };
 
