@@ -146,7 +146,7 @@ const styles = {
     overflow: "hidden",
     zIndex: 0,
     backgroundColor: "#FFD700",
-    fontFamily: "'Source Sans Pro', sans-serif", // Aplicar la fuente globalmente
+    fontFamily: "'Source Sans Pro', sans-serif",
   },
   content: {
     position: "absolute",
@@ -160,29 +160,31 @@ const styles = {
     maxWidth: "800px",
     textAlign: "center",
     color: "black",
-    fontFamily: "'Source Sans Pro', sans-serif", // Aplicar al contenido
+    fontFamily: "'Source Sans Pro', sans-serif",
+    width: "90vw", // Ajuste responsivo para móviles
   },
   table: {
     width: "100%",
     borderCollapse: "collapse",
     marginTop: "1rem",
-    fontFamily: "'Source Sans Pro', sans-serif", // Aplicar a la tabla
+    fontFamily: "'Source Sans Pro', sans-serif",
+    fontSize: "1rem", // Tamaño de fuente base
   },
   th: {
     borderBottom: "2px solid black",
     padding: "0.5rem",
     fontWeight: "bold",
-    fontFamily: "'Source Sans Pro', sans-serif",
+    fontSize: "1rem", // Tamaño de fuente base
   },
   td: {
     borderBottom: "1px solid black",
     padding: "0.5rem",
-    fontFamily: "'Source Sans Pro', sans-serif",
+    fontSize: "0.9rem", // Ligeramente más pequeño
   },
   button: {
     marginTop: "1rem",
-    padding: "10px 20px",
-    fontSize: "16px",
+    padding: "8px 16px",
+    fontSize: "14px",
     fontWeight: "bold",
     backgroundColor: "black",
     color: "yellow",
@@ -191,6 +193,33 @@ const styles = {
     cursor: "pointer",
     fontFamily: "'Source Sans Pro', sans-serif",
   },
+  // Estilos específicos para móviles
+  mobileStyles: `
+    @media (max-width: 768px) {
+      .ranking-container {
+        padding: 1rem;
+        max-width: 100%;
+      }
+      table {
+        font-size: 0.8rem;
+      }
+      th, td {
+        padding: 0.4rem;
+      }
+      h2 {
+        font-size: 1.2rem;
+      }
+      button {
+        font-size: 12px;
+        padding: 6px 12px;
+      }
+    }
+  `,
 };
+
+// Agregar estilos responsivos a la página
+const styleTag = document.createElement("style");
+styleTag.innerHTML = styles.mobileStyles;
+document.head.appendChild(styleTag);
 
 export default RankingPage;

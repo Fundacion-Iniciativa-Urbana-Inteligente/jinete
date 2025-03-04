@@ -15,19 +15,19 @@ const Loader = ({ onLoadingComplete }) => {
           <motion.img
             src="/4.png"
             alt="Logo Final"
-            className="absolute w-[5%] h-auto bg-black m-0 p-0"
+            className="absolute w-[30vw] max-w-[150px] h-auto bg-black m-0 p-0"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 1.5, delay: 0 }}
           />
           <motion.img
-src="/jinete3.svg"
-alt="Logo Jinete"
-className="absolute bg-transparent m-0 p-0"
-initial={{ opacity: 0, scale: 1 }}
-animate={{ opacity: 1, scale: 0.75 }} // Reduce el tamaño a la mitad
-transition={{ duration: 1.5, delay: 1.5 }}
-/>
+            src="/jinete3.svg"
+            alt="Logo Jinete"
+            className="absolute w-[40vw] max-w-[200px] h-auto bg-transparent m-0 p-0"
+            initial={{ opacity: 0, scale: 1 }}
+            animate={{ opacity: 1, scale: 0.75 }} // Reduce el tamaño un poco
+            transition={{ duration: 1.5, delay: 1.5 }}
+          />
         </div>
       </LayoutGroup>
     </div>
