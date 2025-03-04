@@ -90,10 +90,13 @@ export default function Mapa() {
   return (
     <div id="mapa" style={{ position: "relative" }}>
       <MapContainer center={defaultPosition} zoom={15} style={{ height: "80vh" }}>
-        <TileLayer
-          url="https://tiles.stadiamaps.com/tiles/stamen_toner/{z}/{x}/{y}{r}.png"
-          attribution='&copy; <a href="https://stamen.com/">Stamen Design</a> | Map tiles by <a href="https://stadiamaps.com/">Stadia Maps</a> | Data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        />
+      <TileLayer
+        url="https://tiles.stadiamaps.com/tiles/stamen_toner/{z}/{x}/{y}{r}.png"
+        attribution='&copy; Stadia Maps, &copy; OpenStreetMap contributors'
+        maxZoom={20}
+      />
+
+
               {/* BOTÓN RANKINGS - TOP LEFT */}
       <motion.button
         onClick={() => navigate("./ranking")} // Redirigir a la página de rankings
@@ -103,14 +106,14 @@ export default function Mapa() {
           position: "absolute",
           top: "10px",
           right: "10px",
-          padding: "15px",
+          padding: "5px",
           backgroundColor: "yellow",
           color: "black",
           border: "2px solid black",
           borderRadius: "0px",
           cursor: "pointer",
-          fontSize: "22px",
           fontWeight: "bold",
+          fontSize: "16px",
           zIndex: 1000, // Asegura que esté sobre el mapa
         }}
       >
@@ -124,7 +127,7 @@ export default function Mapa() {
               return (
                 <Marker key={bike.bike_id} position={[bike.lat, bike.lon]} icon={bikeIcon}>
                   <Popup>
-                    <h2>{bike.bike_id}</h2>
+                    <h1>{bike.bike_id}</h1>
                     <br />
                     TnCO2eq evitado: {co2Evitado.toFixed(2)}
                     <br />
@@ -149,15 +152,6 @@ export default function Mapa() {
                         console.log("🔗 URL generada:", whatsappUrl);
                         window.open(whatsappUrl, "_blank");
                       }}
-                      style={{
-                        padding: "5px 10px",
-                        backgroundColor: "#25D366",
-                        color: "#fff",
-                        border: "none",
-                        borderRadius: "5px",
-                        cursor: "pointer",
-                        marginTop: "10px",
-                      }}
                     >
                       Reservar en WhatsApp
                     </button>
@@ -166,6 +160,31 @@ export default function Mapa() {
               );
             })}
      </MapContainer>
+       {/* 📌 Atribuciones en la esquina inferior izquierda */}
+       <div
+        style={{
+          position: "absolute",
+          bottom: "5px",
+          left: "5px",
+          backgroundColor: "rgba(255, 255, 255, 0.85)",
+          padding: "5px 8px",
+          fontSize: "10px",
+          borderRadius: "5px",
+          textAlign: "left",
+          zIndex: 1000,
+          maxWidth: "500px",
+          boxShadow: "0px 0px 0px rgba(0,0,0,0.5)"
+        }}
+        >
+        {/*<p style={{ margin: "0", fontSize: "10px", color: "#333" }}>
+          Mapa por <a href="https://stamen.com/" target="_blank" rel="noopener noreferrer">Stamen Design</a>   
+          <a href="https://stadiamaps.com/" target="_blank" rel="noopener noreferrer"> Stadia Maps</a>   
+          Datos &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a>
+        </p>*/}
+        <p style={{ margin: "0", fontSize: "10px", color: "#333", fontWeight: "bold" }}>
+        <strong>© FUNDACIÓN INICIATIVA URBANA INTELIGENTE</strong>
+        </p>
+        </div>
       <footer
         style={{
           position: "absolute",
@@ -192,13 +211,13 @@ export default function Mapa() {
           whileHover={{ scale: 1.2 }}
           whileTap={{ scale: 0.90 }}
           style={{
-            padding: "15px 15px",
+            padding: "4px 50px",
             backgroundColor: "yellow",
             color: "black",
             border: "2px solid black",
             borderRadius: "0px",
             cursor: "pointer",
-            fontSize: "20px",
+            fontSize: "25px",
             fontWeight: "bold",
             marginBottom: "10px",
           }}
