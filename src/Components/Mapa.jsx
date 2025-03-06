@@ -5,7 +5,7 @@ import OtpInput from "react-otp-input";
 import "./Mapa.css";
 import { motion, AnimatePresence } from "framer-motion";
 import L from "leaflet";
-import jineteIcon from "./jinete.svg";
+import jineteIcon from "/jinete.svg";
 import { toast } from 'react-toastify';
 import { useNavigate } from "react-router-dom";  // Importar navegación
 

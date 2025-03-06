@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route, useLocation } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import { useState, useEffect } from "react";
 import "./App.css";
 import Home from "./Pages/Home";
@@ -8,18 +8,25 @@ import Mapa from "./Components/Mapa";
 import Loader from "./Components/Loader";
 import "bootstrap/dist/css/bootstrap.min.css";
 
-
 function App() {
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => {
+    return sessionStorage.getItem("appLoaded") ? false : true;
+  });
 
   useEffect(() => {
-    // Simulamos la carga de la app (puedes ajustarlo según sea necesario)
-    const timer = setTimeout(() => setLoading(false), 3000);
-    return () => clearTimeout(timer);
+    if (!sessionStorage.getItem("appLoaded")) {
+      const timer = setTimeout(() => {
+        setLoading(false);
+        sessionStorage.setItem("appLoaded", "true");
+      }, 3000);
+      return () => clearTimeout(timer);
+    } else {
+      setLoading(false);
+    }
   }, []);
 
   if (loading) {
-    return <Loader onLoadingComplete={() => setLoading(false)} />;
+    return <Loader />;
   }
 
   return (
