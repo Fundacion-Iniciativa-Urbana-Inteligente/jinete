@@ -1,0 +1,143 @@
+/* Asegurar que el fondo ocupa toda la pantalla */
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-size: cover;
+  overflow-y: auto; /* Activa el scroll */
+  font-family: Arial, sans-serif;
+  color: yellow;
+}
+
+/* Contenedor de la página con espacio para evitar que el título se solape */
+.page-container {
+  padding-top: 80px; /* Espacio para evitar que el título se superponga */
+  text-align: center;
+  background: yellow ;
+  color: black; /* Título en amarillo */
+}
+
+/* Ajuste del título */
+#root > div > h1{
+  margin-bottom: 20px;
+  font-size: 2.5rem;
+  color: black; /* Asegura que el título sea amarillo */
+}
+
+/* Contenedor del podio con animación */
+.podium-container {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 20px;
+  margin: 50px 0;
+  height: 250px;
+  padding: 20px 0;
+}
+
+/* Animación del podio con framer-motion */
+.podium {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 20px;
+  width: 150px; /* Aumentado para mejor lectura */
+  text-align: center;
+  border-radius: 10px;
+  color: black;
+  animation: fadeInUp 0.8s ease-out;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Tamaño de los emojis de las medallas */
+.emoji {
+  font-size: 4rem; /* Aumentado para mejor visibilidad */
+  margin-bottom: 10px;
+}
+
+/* Colores y alturas para simular el podio */
+.first-place {
+  background: gold;
+  height: 220px;
+}
+
+.second-place {
+  background: silver;
+  height: 180px;
+}
+
+.third-place {
+  background: #cd7f32;
+  height: 160px;
+}
+
+/* Sección de la tabla sin modificar su fondo */
+.table-container {
+  background: "rgba(255, 255, 255, 0.6)",
+  display: flex;
+  justify-content: center;
+  width: 80%;
+  margin: auto;
+  padding: 20px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  justify-content: center;
+  color: yellow;
+  text-align: left;
+}
+
+th, td {
+  padding: 15px;
+  border-bottom: 1px solid yellow;
+}
+
+th {
+  background: #333;
+  color: yellow;
+  text-align: left;
+}
+
+tr:nth-child(even) {
+  background-color: #222;
+}
+
+tr:hover {
+  background-color: #444;
+}
+
+.button {
+  position: absolute;
+  top: 30px;
+  right: 30px;
+  padding: 5px;
+  background-color: yellow;
+  color: black;
+  border: 2px solid black;
+  border-radius: 0px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 16px;
+  z-index: 1000;
+  transform: none;
+  outline-style: none;
+}
+
+.button-container {
+  display: flex;
+  justify-content: center;
+  margin-top: 20px;
+}
