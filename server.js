@@ -217,157 +217,61 @@ app.get("/mp/success", async (req, res) => {
 
     console.log("💵 [SUCCESS] =>", { payment_id, status, phone, docId });
 
-    // 1) Actualizar en la subcolección a "approved"
-    const paymentRef = db
-      .collection("usuarios")
-      .doc(phone)
-      .collection("pagos")
-      .doc(docId);
+    // 🔹 Actualizar estado del pago en Firestore
+    const paymentRef = db.collection("usuarios").doc(phone).collection("pagos").doc(docId);
+    await paymentRef.update({ status: "approved", mpOrderId: payment_id, updatedAt: new Date().toISOString() });
 
-    await paymentRef.update({
-      status: "approved",
-      mpOrderId: payment_id,
-      updatedAt: new Date().toISOString(),
-    });
-
-    // 2) Llamar a la API de MP para obtener datos del pago (incluyendo info de pagador)
-    const mpResponse = await axios.get(
-      `https://api.mercadopago.com/v1/payments/${payment_id}`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.MERCADOPAGO_TOKEN}`,
-        },
-      }
-    );
-
-    const paymentInfo = mpResponse.data; 
-    const payerEmail = paymentInfo?.payer?.email || "no-mail@unknown.com";
-    const payerName = paymentInfo?.payer?.first_name || "Desconocido";
-    const payerLastName = paymentInfo?.payer?.last_name || "";
-
-    // 3) Guardar estos datos en el doc de la subcolección “pagos”
-    await paymentRef.update({
-      payerName: `${payerName} ${payerLastName}`.trim(),
-      payerEmail,
-    });
-
-    // 4) Sumar el saldo, etc. (igual que antes)
+    // 🔹 Actualizar saldo del usuario
     const paymentSnap = await paymentRef.get();
-    const paymentData = paymentSnap.data();
-    const amount = parseFloat(paymentData.amount || 0);
+    const amount = parseFloat(paymentSnap.data().amount || 0);
 
-      // 5) Actualizar saldo del usuario
-      const userRef = db.collection("usuarios").doc(phone);
-      await db.runTransaction(async (t) => {
-        const userDoc = await t.get(userRef);
-        if (!userDoc.exists) return;
-        const userData = userDoc.data();
-        const saldoActual = parseFloat(userData.saldo || "0");
-        const nuevoSaldo = saldoActual + amount;
-        t.update(userRef, { saldo: nuevoSaldo.toString() });
-      });
+    const userRef = db.collection("usuarios").doc(phone);
+    await db.runTransaction(async (t) => {
+      const userDoc = await t.get(userRef);
+      if (!userDoc.exists) return;
+      const saldoActual = parseFloat(userDoc.data().saldo || "0");
+      t.update(userRef, { saldo: (saldoActual + amount).toString() });
+    });
 
-      // 🔹 Resetea la sesión del usuario a menu_main
-      const sessionRef = db.collection("users_session").doc(phone);
-      await sessionRef.set({ step: "menu_main" }, { merge: true });
-
-      await sendMessage(
-        `✔️ ¡Gracias, ${payerName}! Se acreditó tu pago (ID ${payment_id}). Tu saldo fue actualizado.\nEscribe *'Menu'* para ver opciones.`,
-        phone
-      );
-
-
-    // 6) Notificar al usuario por WhatsApp
+    // 🔹 Enviar mensaje de confirmación por WhatsApp
     await sendMessage(
-      `✔️ ¡Gracias, ${payerName}! Se acreditó tu pago (ID ${payment_id}). Tu saldo fue actualizado.`,
+      `✔️ *Pago recibido:*\nTu recarga de *${amount} ARS* ha sido acreditada. ¡Gracias! 🎉`,
       phone
     );
 
-    // 7) Respuesta
-    res.send(`
-      <html>
-        <body>
-          <h1>¡Pago aprobado!</h1>
-          <p>Se registró a nombre de ${payerName} (${payerEmail}). Puedes cerrar esta ventana.</p>
-        </body>
-      </html>
-    `);
+    return res.send("Pago procesado correctamente.");
   } catch (error) {
     console.error("❌ Error en /mp/success:", error.message);
-    res.status(500).send("Error procesando el pago.");
+    return res.status(500).send("Error procesando el pago.");
   }
 });
+
 
 app.get("/mp/failure", async (req, res) => {
-  try {
-    const { payment_id, status, external_reference } = req.query;
-    const parsedRef = JSON.parse(external_reference || "{}");
-    
-    console.log("💵 [FAILURE] Pago fallido =>", { payment_id, status, parsedRef });
-    
-    // Actualiza el doc a "failure"
-    const phone = parsedRef.phone;
-    const docId = parsedRef.docId;
-    const paymentRef = db.collection("usuarios").doc(phone).collection("pagos").doc(docId);
+  const { phone, docId } = JSON.parse(req.query.external_reference || "{}");
+  console.log("💵 [FAILURE] Pago fallido =>", { phone, docId });
 
-    await paymentRef.update({
-      status: "failure",
-      mpOrderId: payment_id || "",
-      updatedAt: new Date().toISOString(),
-    });
+  const paymentRef = db.collection("usuarios").doc(phone).collection("pagos").doc(docId);
+  await paymentRef.update({ status: "failure", updatedAt: new Date().toISOString() });
 
-    // Notificar al usuario
-    await sendMessage(`❌ Tu pago (ID ${payment_id}) falló o fue rechazado.`, phone);
+  await sendMessage(`❌ Tu pago ha sido rechazado. Inténtalo nuevamente.`, phone);
 
-    // Respuesta
-    res.send(`
-      <html>
-        <body>
-          <h1>Pago fallido</h1>
-          <p>Intenta nuevamente más tarde.</p>
-        </body>
-      </html>
-    `);
-  } catch (error) {
-    console.error("❌ Error en /mp/failure:", error.message);
-    res.status(500).send("Error procesando el rechazo del pago.");
-  }
+  return res.send("Pago fallido procesado.");
 });
+
 
 app.get("/mp/pending", async (req, res) => {
-  try {
-    const { payment_id, status, external_reference } = req.query;
-    const parsedRef = JSON.parse(external_reference || "{}");
+  const { phone, docId } = JSON.parse(req.query.external_reference || "{}");
+  console.log("💵 [PENDING] Pago pendiente =>", { phone, docId });
 
-    console.log("💵 [PENDING] Pago pendiente =>", { payment_id, status, parsedRef });
+  const paymentRef = db.collection("usuarios").doc(phone).collection("pagos").doc(docId);
+  await paymentRef.update({ status: "pending", updatedAt: new Date().toISOString() });
 
-    // Actualizar doc => status: "pending"
-    const phone = parsedRef.phone;
-    const docId = parsedRef.docId;
-    const paymentRef = db.collection("usuarios").doc(phone).collection("pagos").doc(docId);
+  await sendMessage(`⏳ Tu pago está pendiente. En cuanto se acredite, te avisaremos.`, phone);
 
-    await paymentRef.update({
-      status: "pending",
-      mpOrderId: payment_id || "",
-      updatedAt: new Date().toISOString(),
-    });
-
-    // Notificar al usuario (opcional)
-    await sendMessage(`⏳ Tu pago (ID ${payment_id}) está pendiente.`, phone);
-
-    res.send(`
-      <html>
-        <body>
-          <h1>Pago pendiente</h1>
-          <p>Por favor, espera la confirmación.</p>
-        </body>
-      </html>
-    `);
-  } catch (error) {
-    console.error("❌ Error en /mp/pending:", error.message);
-    res.status(500).send("Error procesando el pago pendiente.");
-  }
+  return res.send("Pago pendiente procesado.");
 });
+
 
 // --------------------------------------------------------------------------
 // Funciones auxiliares para JIMI IoT
@@ -576,28 +480,44 @@ async function updateFreeBikeStatus() {
       return;
     }
 
+    // 1️⃣ **Obtener el estado actual de `free_bike_status`**
+    const freeBikeStatusRef = db.collection('free_bike_status').doc('bikes_data');
+    const freeBikeSnap = await freeBikeStatusRef.get();
+    let currentBikes = {};
+
+    if (freeBikeSnap.exists) {
+      const data = freeBikeSnap.data();
+      (data.bikes || []).forEach(bike => {
+        currentBikes[bike.bike_id.toLowerCase().trim()] = {
+          is_reserved: bike.is_reserved,
+          is_disabled: bike.is_disabled
+        };
+      });
+    }
+
     const bikes = [];
 
     snapshot.forEach((doc) => {
       const device = doc.data();
+      const bikeId = device.deviceName || "desconocido";
 
-      // Intentar obtener datos previos del documento
-      const existingData = doc.data() || {};
-
+      // 2️⃣ **Mantener el estado actual de `is_reserved` si ya estaba en `free_bike_status`**
+      const previousState = currentBikes[bikeId] || {};
+      
       bikes.push({
-        bike_id: device.deviceName || "Desconocido",
+        bike_id: bikeId,
         current_mileage: device.currentMileage || 0,
         lat: device.lat || 0,
         lon: device.lng || 0,
         current_fuel_percent: device.electQuantity || 0,
         last_reported: Date.now(),
-        is_reserved: existingData.is_reserved ?? false,
-        is_disabled: existingData.is_disabled ?? false,
+        is_reserved: previousState.is_reserved ?? false, // 🔥 Mantener el estado actual
+        is_disabled: previousState.is_disabled ?? false, // 🔥 Mantener `is_disabled`
         vehicle_type_id: "bicycle",
       });
     });
 
-    const freeBikeStatusRef = admin.firestore().collection('free_bike_status').doc('bikes_data');
+    // 3️⃣ **Actualizar Firestore sin sobrescribir `is_reserved` incorrectamente**
     await freeBikeStatusRef.set({ bikes });
 
     console.log(`✅ ${bikes.length} bicicletas actualizadas en free_bike_status`);
@@ -990,7 +910,7 @@ async function checkLockStateAndFinishRides() {
       // 1️⃣ **Construir payload para STATUS#**
       const commonParams = generateCommonParameters('jimi.open.instruction.send');
       const instParamJson = {
-        inst_id: '418', // o el ID que aplique
+        inst_id: '418',
         inst_template: 'STATUS#',
         params: [],
         is_cover: 'false',
@@ -1027,13 +947,24 @@ async function checkLockStateAndFinishRides() {
 
         const result = response.data.result.toLowerCase();
 
-        // 4️⃣ **Detectar "lock state"**
-        if (result.includes('lock state')) {
+
+        // 4️⃣ **Detectar estado del candado con expresiones regulares**
+        const isLocked = /\block state;/.test(result);
+        const isUnlocked = /\bunlock state;/.test(result);
+
+        if (isLocked && !isUnlocked) { 
           console.log(`🔒 Se detectó candado cerrado para rideId=${rideId}. Finalizando...`);
           
-          // 5️⃣ **Finalizar el viaje**
+          // 5️⃣ **Finalizar el viaje** (Ahora `finalizeRide` recibe `startTime`)
           await finalizeRide(rideId, userId, bikeId, startTime);
+
+        } else if (isUnlocked) { 
+          console.log(`🔓 Candado sigue abierto para rideId=${rideId}. No finaliza el viaje.`);
+
+        } else {
+          console.log(`⚠️ Estado desconocido en respuesta de JIMI IoT: ${result}`);
         }
+
       } catch (error) {
         console.error(`❌ Error en STATUS# para IMEI ${imei}:`, error.response?.data || error.message);
       }
@@ -1042,6 +973,7 @@ async function checkLockStateAndFinishRides() {
     console.error("❌ Error en checkLockStateAndFinishRides:", error.message);
   }
 }
+
 
 
 /**
@@ -1056,7 +988,9 @@ async function checkLockStateAndFinishRides() {
  */
 async function finalizeRide(rideId, userId, bikeId, startTime) {
   try {
-    // 1) Obtener la info de precios
+    console.log(`🔍 Finalizando viaje: rideId=${rideId}, bikeId=${bikeId}, startTime=${startTime}`);
+
+    // 1️⃣ **Obtener la info de precios**
     const planRef = db.collection('system_pricing_plans').doc('pricing_plans_1');
     const planSnap = await planRef.get();
     if (!planSnap.exists) {
@@ -1067,12 +1001,21 @@ async function finalizeRide(rideId, userId, bikeId, startTime) {
     const basePrice = parseFloat(planData.price) || 0;      
     const ratePerMin = parseFloat(planData.per_min_pricing.rate) || 0; 
 
-    // 2) Calcular duración y costo
+    // 2️⃣ **Calcular duración y costo**
     const endTime = new Date();
-    const durationMinutes = Math.floor((endTime - new Date(startTime)) / 60000); 
-    const totalCost = basePrice + (ratePerMin * durationMinutes);
+    const startDateTime = new Date(startTime);
+    
+    if (isNaN(startDateTime.getTime())) {
+      console.error("❌ Error: 'startTime' no es una fecha válida.", startTime);
+      return;
+    }
 
-    // 3) Leer la ubicación final de la bici en free_bike_status
+    const durationMinutes = Math.max(1, Math.ceil((endTime - startDateTime) / 60000)); // 🔥 Asegurar al menos 1 minuto
+    const totalCost = basePrice + (ratePerMin * durationMinutes);
+    
+    console.log(`⏳ Duración del viaje: ${durationMinutes} min | Costo total: $${totalCost}`);
+
+    // 3️⃣ **Leer la ubicación final de la bici en `free_bike_status`**
     const freeBikeRef = db.collection('free_bike_status').doc('bikes_data');
     const freeBikeSnap = await freeBikeRef.get();
     if (!freeBikeSnap.exists) {
@@ -1080,9 +1023,9 @@ async function finalizeRide(rideId, userId, bikeId, startTime) {
       return;
     }
 
-    const data = freeBikeSnap.data(); 
+    const data = freeBikeSnap.data();
     const bikesArray = data.bikes || [];
-    const index = bikesArray.findIndex(b => b.bike_id === bikeId);
+    const index = bikesArray.findIndex(b => b.bike_id.toLowerCase().trim() === bikeId.toLowerCase().trim());
     if (index === -1) {
       console.error("❌ No se encontró la bicicleta en free_bike_status para obtener endLat/endLon.");
       return;
@@ -1095,7 +1038,7 @@ async function finalizeRide(rideId, userId, bikeId, startTime) {
     bikesArray[index].is_reserved = false;
     await freeBikeRef.update({ bikes: bikesArray });
 
-    // 4) Actualizar ride => status: finalizado + posición final + duración + costo
+    // 4️⃣ **Actualizar ride => status: finalizado + posición final + duración + costo**
     const rideRef = db.collection('rides').doc(rideId);
     await rideRef.update({
       status: 'finalizado',
@@ -1106,7 +1049,9 @@ async function finalizeRide(rideId, userId, bikeId, startTime) {
       endLon
     });
 
-    // 5) Registrar “débito” en la subcolección del usuario
+    console.log(`✅ Viaje ${rideId} finalizado. Costo: $${totalCost}`);
+
+    // 5️⃣ **Registrar “débito” en la subcolección del usuario**
     const userRef = db.collection('usuarios').doc(userId);
     const debitosRef = userRef.collection('debitos');
     const newDebitoRef = debitosRef.doc(); 
@@ -1118,42 +1063,32 @@ async function finalizeRide(rideId, userId, bikeId, startTime) {
       concepto: "Alquiler de bicicleta"
     });
 
-    // 6) Actualizar saldo del usuario
+    // 6️⃣ **Actualizar saldo del usuario**
+    let saldoActualizado = 0;
     await db.runTransaction(async (t) => {
       const userDoc = await t.get(userRef);
       if (!userDoc.exists) return;
       const userData = userDoc.data();
       const saldoActual = parseFloat(userData.saldo || "0");
-      const nuevoSaldo = saldoActual - totalCost;
-      t.update(userRef, { saldo: nuevoSaldo.toString() });
+      saldoActualizado = saldoActual - totalCost;
+      t.update(userRef, { saldo: saldoActualizado.toString() });
     });
 
-    // 🔹 Resetea la sesión del usuario a menu_main
+    console.log(`💰 Saldo actualizado: $${saldoActualizado}`);
+
+    // 🔹 **Resetea la sesión del usuario a menu_main**
     const sessionRef = db.collection("users_session").doc(userId);
     await sessionRef.set({ step: "menu_main" }, { merge: true });
 
+    // 7️⃣ **Notificar usuario por Twilio**
     await sendMessage(
       `🚲 ¡Tu viaje ha finalizado!\nDuración: ${durationMinutes} min.\nCosto total: $${totalCost}.\n` +
       `Tu saldo actual es: $${saldoActualizado}.\nEscribe *'Menu'* para ver opciones.`,
       userId
     );
 
+    console.log(`✅ Notificación enviada: Viaje ${rideId} finalizado. Costo: $${totalCost}, Nuevo saldo: $${saldoActualizado}`);
 
-    // 7) Notificar usuario por Twilio
-    const userSnap = await userRef.get();
-    const updatedUserData = userSnap.data();
-    const saldoActualizado = updatedUserData.saldo || "0";
-
-    await sendMessage(
-      `¡Tu viaje ha finalizado!\n` + 
-      `Duración: ${durationMinutes} min.\n` +
-      `Costo total: $${totalCost}.\n` +
-      `Tu saldo actual es: $${saldoActualizado}.\n` +
-      `Gracias por usar Jinete.ar 🚲`,
-      userId 
-    );
-
-    console.log(`✅ Viaje ${rideId} finalizado. Costo: $${totalCost}, Nuevo saldo: $${saldoActualizado}`);
   } catch (error) {
     console.error("❌ Error finalizando viaje:", error.message);
   }
@@ -1226,16 +1161,27 @@ async function sendMessage(body, to) {
 }
 
 async function sendMainMenu(to) {
-  const text =
-    `*Menú principal*\n` +
-    `1) Solicitar token de desbloqueo\n` +
-    `2) Soporte\n` +
-    `3) Ver saldo\n` +
-    `4) Recargar saldo\n` +
-    `5) Informar desperfectos \n\n` +
-    `Para regresar a este menú en cualquier momento, escribe "Menu".`;
+  const body = `*Menú principal*\nSelecciona una opción:`; 
 
-  await sendMessage(text, to);
+  try {
+    const response = await twilioClient.messages.create({
+      from: process.env.TWILIO_PHONE_NUMBER,
+      to,
+      body,
+      persistentAction: [
+        "quick_reply:🔓 DESBLOQUEAR BICICLETA",
+        "quick_reply:🛠 ¿CONSULTAS?",
+        "quick_reply:💰 BILLETERA",
+        "quick_reply:⚠️ INFORMAR PROBLEMAS"
+      ]
+    });
+
+    console.log(`✅ Menú enviado a ${to}: ${response.sid}`);
+    return response;
+  } catch (error) {
+    console.error("❌ Error al enviar el menú con Twilio:", error);
+    throw new Error(`No se pudo enviar el menú. Detalles: ${error.message}`);
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1285,6 +1231,15 @@ app.post("/webhook", async (req, res) => {
         From
       );
       return res.status(200).send("Bicicleta no encontrada");
+    }
+  
+    // 🔹 Validamos si la bicicleta está en uso (is_reserved = true)
+    if (bikeObj.is_reserved) {
+      await sendMessage(
+        `🚲 La bicicleta "${bikeName}" ya está en uso por otro jinete. Prueba con otra bicicleta disponible en https://jinete-ar.web.app/.`,
+        From
+      );
+      return res.status(200).send("Bicicleta en uso");
     }
 
     // 🔹 Guardamos SOLO el `bike_id` en la sesión del usuario
@@ -1390,7 +1345,7 @@ export const handleUserResponse = async (Body, From, res) => {
           if (saldoActual < bajadaDeBandera) {
             await sendMessage(
               `No tienes saldo suficiente. La bajada de bandera es de ${bajadaDeBandera} ${planData.currency || "ARS"}. ` +
-              `Selecciona '5' para recargar saldo o escribe 'menu' para el menú principal.`,
+              `Selecciona '3' para recargar saldo o escribe 'menu' para el menú principal.`,
               From
             );
             return res.status(200).send("Saldo insuficiente");
@@ -1485,6 +1440,7 @@ export const handleUserResponse = async (Body, From, res) => {
 
         case "3": {
           const userSnap = await db.collection("usuarios").doc(From).get();
+        
           if (!userSnap.exists) {
             await sendMessage(
               "No encuentro tu usuario. Opción '1' para registrarte o 'menu' para opciones.",
@@ -1492,18 +1448,33 @@ export const handleUserResponse = async (Body, From, res) => {
             );
             return res.status(200).send("Usuario no registrado");
           }
+        
           const { saldo } = userSnap.data();
-          await sendMessage(`Tu saldo actual es: *${saldo}* $.`, From);
-          return res.status(200).send("Saldo consultado");
+        
+          try {
+            const response = await twilioClient.messages.create({
+              from: process.env.TWILIO_PHONE_NUMBER,
+              to: From,
+              body: `Tu saldo actual es: *${saldo}* $. ¿Deseas recargar saldo?`,
+              persistentAction: [
+                "quick_reply:❌ No, gracias",
+                "quick_reply:✅ Sí, recargar 1000 $",
+                "quick_reply:💰 Sí, recargar otro monto"
+              ]
+            });
+        
+            console.log(`✅ Pregunta de recarga enviada a ${From}: ${response.sid}`);
+            
+            // Guardamos el estado para saber que el usuario está en este flujo
+            await sessionRef.update({ step: "ask_recarga_confirm" });
+        
+            return res.status(200).send("Saldo consultado y esperando confirmación de recarga");
+          } catch (error) {
+            console.error("❌ Error al enviar los botones de recarga con Twilio:", error);
+            throw new Error(`No se pudo enviar la consulta de recarga. Detalles: ${error.message}`);
+          }
         }
-
         case "4": {
-          await sessionRef.update({ step: "ask_recarga" });
-          await sendMessage("¿Cuánto deseas recargar en ARS?", From);
-          return res.status(200).send("Iniciando recarga de saldo");
-        }
-
-        case "5": {
           console.log(`🟢 [DEBUG] Opción 6 - Iniciando reporte para: ${From}`);
           await sessionRef.set({ step: "report_issue" }, { merge: true });
           await sendMessage("🔧 *Reporte de desperfectos*\n\nDescribe el problema encontrado:", From);
@@ -1538,71 +1509,80 @@ export const handleUserResponse = async (Body, From, res) => {
         return res.status(500).send("Soporte error");
       }
     }
-    
-    case "confirm_data": {
-      if (Body.toLowerCase() === "sí" || Body.toLowerCase() === "si") {
-        const finalRegData = sessionDoc.data();
-        await db.collection("usuarios").doc(From).set({
-          name: finalRegData.name,
-          lastName: finalRegData.lastName,
-          dni: finalRegData.dni,
-          email: finalRegData.email,
-          saldo: "0",
-          validado: true,
-        });
-        await sessionRef.update({ step: "menu_main" }); 
-        await sendMessage(
-          "¡Registro completado! Tu saldo inicial es 0$. Escribe '5' para recargar o 'menu' para opciones.",
-          From
-        );
-        return res.status(200).send("Registro completado");
-      } else if (Body.toLowerCase() === "no") {
-        await sessionRef.delete();
-        await sendMessage("Registro cancelado. Escribe 'menu' para comenzar de nuevo.", From);
-        return res.status(200).send("Registro cancelado");
-      } else {
-        await sendMessage("Por favor, responde *Sí* o *No*.", From);
-        return res.status(200).send("Confirmación no válida");
+   
+    case "ask_recarga_confirm": {
+      if (Body === "✅ Sí, recargar 1000 $") {
+        // Guardamos el monto directamente y pasamos a la generación de pago
+        await sessionRef.update({ step: "ask_recarga", recarga: 1000 });
+        return await handleRecarga(From, 1000, res);
+      } 
+      
+      if (Body === "💰 Sí, recargar otro monto") {
+        await sessionRef.update({ step: "ask_recarga_custom" });
+        await sendMessage("Por favor, ingresa el monto que deseas recargar en ARS. Ejemplo: 500", From);
+        return res.status(200).send("Esperando monto de recarga");
       }
+      
+      if (Body === "❌ No, gracias") {
+        await sendMessage("Operación cancelada. Escribe 'menu' para volver al menú principal.", From);
+        await sessionRef.update({ step: null, recarga: null });
+        return res.status(200).send("Recarga cancelada");
+      }
+    }
+    // eslint-disable-next-line no-fallthrough
+    case "ask_recarga_custom": {
+      const monto = parseFloat(Body);
+      if (isNaN(monto) || monto <= 0) {
+        await sendMessage("Por favor, ingresa un monto numérico válido. Ejemplo: 500", From);
+        return res.status(200).send("Monto inválido");
+      }
+    
+      // Guardamos el monto ingresado y pasamos a la generación del pago
+      await sessionRef.update({ step: "ask_recarga", recarga: monto });
+      return await handleRecarga(From, monto, res);
     }
 
     case "ask_recarga": {
       const monto = parseFloat(Body);
-      if (isNaN(monto)) {
-        await sendMessage("Por favor, ingresa un monto numérico. Ej: 500", From);
+      
+      if (isNaN(monto) || monto <= 0) {
+        await sendMessage("❌ Ingresa un monto válido en ARS. Ejemplo: 500", From);
         return res.status(200).send("Monto inválido");
       }
-      // 1) Buscar el usuario y su email
+    
+      // 🔹 Buscar usuario en Firestore
       const userSnap = await db.collection("usuarios").doc(From).get();
       if (!userSnap.exists) {
         await sendMessage("No encuentro tu usuario. Regístrate con la opción '1'.", From);
         return res.status(200).send("Usuario no registrado");
       }
+    
       const userData = userSnap.data();
-      const userEmail = userData.email || "soporte@jinete.ar"; 
-      // 2) Creamos un doc en la subcolección "pagos"
+      const userEmail = userData.email || "soporte@jinete.ar";
+    
+      // 🔹 Crear documento en la subcolección "pagos"
       const pagosRef = db.collection("usuarios").doc(From).collection("pagos");
       const newPaymentDoc = pagosRef.doc();
       const docId = newPaymentDoc.id;
-      // 3) Creamos la preferencia => 'external_reference'
+    
+      // 🔹 Generar preferencia de MercadoPago con back_urls
       const result = await createPreference(
-        userEmail, 
-        "Recarga de saldo", 
-        1, 
-        monto, 
+        userEmail,
+        "Recarga de saldo",
+        1,
+        monto,
         { phone: From, docId }
       );
+    
       if (result.error) {
-        await sendMessage(
-          "No pude generar el link de pago. Inténtalo más tarde o escribe 'menu'.",
-          From
-        );
+        await sendMessage("No pude generar el link de pago. Inténtalo más tarde o escribe 'menu'.", From);
         return res.status(200).send("Error al crear preferencia MP");
       }
+    
       const preference = result.preference;
       const initPoint = preference.init_point;
-
-      // 4) Guardamos "pending" en Firestore
+    
+      // 🔹 Guardar estado "pending" en Firestore
       await newPaymentDoc.set({
         amount: monto,
         concepto: "Recarga de saldo",
@@ -1613,25 +1593,70 @@ export const handleUserResponse = async (Body, From, res) => {
         timestamp: new Date().toISOString(),
         initPoint,
       });
-
-      // 5) Enviamos el link al usuario
+    
+      // 🔹 Enviar link de pago al usuario
       await sendMessage(
-        `Link de pago por *${monto} ARS*:\n${initPoint}\n` + 
-        `¡Paga y automáticamente se procesará la recarga!`,
+        `✅ *Recarga generada*\n💰 Monto: *${monto} ARS*\n🔗 Link de pago:\n${initPoint}\n\n` +
+        `📌 *IMPORTANTE:* Paga y tu saldo se actualizará automáticamente.`,
         From
       );
-      // 6) Cambiamos el step a "await_payment"
+    
+      // 🔹 Actualizar sesión a "await_payment"
       await sessionRef.update({ step: "await_payment", recarga: monto });
-      return res.status(200).send("Recarga solicitada");
+    
+      return res.status(200).send("Recarga solicitada y esperando pago.");
     }
-
+    
     case "await_payment": {
-      if (Body.toLowerCase().includes("listo")) {
-        await sendMessage("Verificaremos el estado de tu pago. Un momento...", From);
-        return res.status(200).send("Usuario dice que pagó");
+      if (Body.toLowerCase().includes("listo") || Body === "✅ Verificar pago") {
+        await sendMessage("🔍 Verificaremos el estado de tu pago. Un momento...", From);
+        return res.status(200).send("Usuario solicita verificar pago");
       }
-      await sendMessage("Aguardando confirmación de tu pago. Escribe 'Soporte' o 'menu' si lo necesitas.", From);
-      return res.status(200).send("Pendiente de pago");
+    
+      if (Body === "❌ Cancelar pago") {
+        // 🔹 Eliminar la recarga pendiente en Firestore
+        const sessionSnap = await sessionRef.get();
+        const sessionData = sessionSnap.data();
+        const monto = sessionData.recarga;
+    
+        const pagosRef = db.collection("usuarios").doc(From).collection("pagos");
+        const pendingPaymentSnap = await pagosRef.where("status", "==", "pending").limit(1).get();
+    
+        if (!pendingPaymentSnap.empty) {
+          const pendingDoc = pendingPaymentSnap.docs[0];
+          await pendingDoc.ref.update({ status: "canceled" });
+        }
+    
+        await sessionRef.update({ step: "menu_main", recarga: null });
+        await sendMessage("❌ La recarga ha sido cancelada. Escribe 'Menu' para volver al menú principal.", From);
+        return res.status(200).send("Pago cancelado");
+      }
+    
+      if (Body === "📜 Menú principal") {
+        await sessionRef.update({ step: "menu_main" });
+        await sendMainMenu(From);
+        return res.status(200).send("Usuario volvió al menú");
+      }
+    
+      // 🔹 Enviar mensaje con botones de opciones
+      try {
+        const response = await twilioClient.messages.create({
+          from: process.env.TWILIO_PHONE_NUMBER,
+          to: From,
+          body: "⏳ *Aguardando confirmación de pago*.\nSelecciona una opción:",
+          persistentAction: [
+            "quick_reply:✅ Verificar pago",
+            "quick_reply:❌ Cancelar pago",
+            "quick_reply:📜 Menú principal"
+          ]
+        });
+    
+        console.log(`✅ Menú de pago enviado a ${From}: ${response.sid}`);
+        return res.status(200).send("Esperando pago con opciones interactivas");
+      } catch (error) {
+        console.error("❌ Error al enviar botones de pago con Twilio:", error);
+        throw new Error(`No se pudo enviar el menú de pago. Detalles: ${error.message}`);
+      }
     }
 
     case "report_issue": {
