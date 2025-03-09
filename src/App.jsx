@@ -7,6 +7,7 @@ import RankingPage from "./Components/RankingPage";
 import Mapa from "./Components/Mapa";
 import Loader from "./Components/Loader";
 import "bootstrap/dist/css/bootstrap.min.css";
+import RegistroUsuario from "./Components/RegistroUsuario";
 
 function App() {
   const [loading, setLoading] = useState(() => {
@@ -35,6 +36,7 @@ function App() {
         <Route path="/" element={<Home />} />
         <Route path="/ranking" element={<RankingPage />} />
         <Route path="/map" element={<Mapa />} />
+        <Route path="/registro" element={<RegistroUsuario />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </Router>

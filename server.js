@@ -1160,30 +1160,89 @@ async function sendMessage(body, to) {
   }
 }
 
-async function sendMainMenu(to) {
-  const body = `*Menú principal*\nSelecciona una opción:`; 
-
+async function processRecarga(From, res) {
   try {
-    const response = await twilioClient.messages.create({
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to,
-      body,
-      persistentAction: [
-        "quick_reply:🔓 DESBLOQUEAR BICICLETA",
-        "quick_reply:🛠 ¿CONSULTAS?",
-        "quick_reply:💰 BILLETERA",
-        "quick_reply:⚠️ INFORMAR PROBLEMAS"
-      ]
+    const sessionRef = db.collection("users_session").doc(From);
+    const sessionSnap = await sessionRef.get();
+    const sessionData = sessionSnap.data();
+
+    if (!sessionData || !sessionData.recarga) {
+      await sendMessage("Ocurrió un error con el monto ingresado. Escribe 'menu' para volver a las opciones.", From);
+      return res.status(400).send("Error en monto de recarga");
+    }
+
+    const monto = parseFloat(sessionData.recarga);
+    if (isNaN(monto) || monto <= 0) {
+      await sendMessage("❌ El monto ingresado no es válido. Escribe 'menu' para volver al menú principal.", From);
+      return res.status(400).send("Monto inválido");
+    }
+
+    const userSnap = await db.collection("usuarios").doc(From).get();
+    if (!userSnap.exists) {
+      await sendMessage("No encontramos tu usuario en nuestra base de datos. Regístrate con la opción '1'.", From);
+      return res.status(200).send("Usuario no registrado");
+    }
+
+    const userData = userSnap.data();
+    const userEmail = userData.email || "soporte@jinete.ar";
+
+    const pagosRef = db.collection("usuarios").doc(From).collection("pagos");
+    const newPaymentDoc = pagosRef.doc();
+    const docId = newPaymentDoc.id;
+
+    const result = await createPreference(
+      userEmail,
+      "Recarga de saldo",
+      1,
+      monto,
+      { phone: From, docId }
+    );
+
+    if (result.error) {
+      await sendMessage("Hubo un problema al generar el link de pago. Inténtalo más tarde o escribe *menu* para regresar.", From);
+      return res.status(200).send("Error al crear preferencia MP");
+    }
+
+    const preference = result.preference;
+    const initPoint = preference.init_point;
+
+    await newPaymentDoc.set({
+      amount: monto,
+      concepto: "Recarga de saldo",
+      currency: "ARS",
+      metodo: "MercadoPago",
+      mpOrderId: preference.id || "",
+      status: "pending",
+      timestamp: new Date().toISOString(),
+      initPoint,
     });
 
-    console.log(`✅ Menú enviado a ${to}: ${response.sid}`);
-    return response;
+    await sendMessage(
+      `✅ *Recarga generada*\n💰 Monto: *${monto} ARS*\n🔗 Link de pago: ${initPoint}\n\n` +
+      `📌 *IMPORTANTE:* Una vez que completes el pago, tu saldo se actualizará automáticamente.`,
+      From
+    );
+
+    await sessionRef.update({ step: "await_payment", recarga: monto });
+
+    return res.status(200).send("Recarga solicitada y esperando pago.");
   } catch (error) {
-    console.error("❌ Error al enviar el menú con Twilio:", error);
-    throw new Error(`No se pudo enviar el menú. Detalles: ${error.message}`);
+    console.error("❌ Error en processRecarga:", error);
+    await sendMessage("Ocurrió un problema con la recarga. Inténtalo nuevamente.", From);
+    return res.status(500).send("Error en processRecarga");
   }
 }
 
+async function sendMainMenu(to) {
+  const text = `*Menú principal*\nSelecciona una opción respondiendo con el número correspondiente:\n\n` +
+                     `1️⃣ Desbloquear bicicleta\n` +
+                     `2️⃣ Consultas y soporte\n` +
+                     `3️⃣ Ver billetera y saldo\n` +
+                     `4️⃣ Informar problemas\n\n` +
+                     `Escribe el número de la opción que deseas elegir.`;
+
+                     await sendMessage(text, to); // Envía el mensaje al usuario
+                    }
 /* -------------------------------------------------------------------------- */
 /*             Lógica para Chatbot y Menú Principal (webhook)                 */
 /* -------------------------------------------------------------------------- */
@@ -1278,12 +1337,11 @@ app.post("/webhook", async (req, res) => {
   
     // 🔹 Resetea la sesión a menu_main
     await sessionRef.set({ step: "menu_main" }, { merge: true });
-  
-    await sendMessage(
-      "✅ ¡DNI verificado! Puedes continuar con el alquiler. Escribe *'Menu'* para ver opciones.",
-      From
-    );
-    return res.status(200).send("DNI verificado");
+    await sendMessage("✅ ¡DNI verificado! Puedes continuar con el alquiler.", From);
+
+    // 🔹 Enviar el menú automáticamente sin que el usuario tenga que escribir "Menu"
+    await sendMainMenu(From);
+    return res.status(200).send("DNI verificado y menú enviado");
   }
 
   if (Body.trim().toLowerCase() === "menu") {
@@ -1309,7 +1367,6 @@ export const handleUserResponse = async (Body, From, res) => {
     await sendMessage("No encontré tu sesión. Escribe 'Menu' para ver opciones.", From);
     return res.status(400).json({ message: "Sesión no encontrada." });
   }
-
   const { step, selectedBike } = sessionDoc.data();
 
   switch (step) {
@@ -1321,7 +1378,7 @@ export const handleUserResponse = async (Body, From, res) => {
           const userSnap = await db.collection("usuarios").doc(From).get();
           if (!userSnap.exists) {
             await sendMessage(
-              "No encuentro tu usuario. Elige opción '1' para registrarte o escribe 'menu' para ver opciones.",
+              "No encontramos tu DNI en la base de datos. Por favor, regístrate en https://jinete-ar.web.app/",
               From
             );
             return res.status(200).send("Usuario no registrado");
@@ -1425,7 +1482,7 @@ export const handleUserResponse = async (Body, From, res) => {
           } catch (error) {
             console.error("❌ Error generando token:", error.message);
             await sendMessage(
-              "Hubo un problema generando el token de desbloqueo. Escribe 'Soporte' o 'menu' para volver.",
+              "Hubo un problema generando el token de desbloqueo. Escribe 'menu' para volver.",
               From
             );
             return res.status(500).send("Error generando token");
@@ -1434,7 +1491,7 @@ export const handleUserResponse = async (Body, From, res) => {
 
         case "2": {
           await sessionRef.update({ step: "soporte_mode" });
-          await sendMessage("Has elegido *Soporte*. ¿En qué podemos ayudarte?", From);
+          await sendMessage("Hola, soy Jinete.ar estoy para ayudarte. ¿En que puedo asistirte?", From);
           return res.status(200).send("Soporte");
         }
 
@@ -1443,7 +1500,7 @@ export const handleUserResponse = async (Body, From, res) => {
         
           if (!userSnap.exists) {
             await sendMessage(
-              "No encuentro tu usuario. Opción '1' para registrarte o 'menu' para opciones.",
+              "No encontramos tu DNI en la base de datos. Por favor, regístrate en https://jinete-ar.web.app/",
               From
             );
             return res.status(200).send("Usuario no registrado");
@@ -1451,33 +1508,26 @@ export const handleUserResponse = async (Body, From, res) => {
         
           const { saldo } = userSnap.data();
         
-          try {
-            const response = await twilioClient.messages.create({
-              from: process.env.TWILIO_PHONE_NUMBER,
-              to: From,
-              body: `Tu saldo actual es: *${saldo}* $. ¿Deseas recargar saldo?`,
-              persistentAction: [
-                "quick_reply:❌ No, gracias",
-                "quick_reply:✅ Sí, recargar 1000 $",
-                "quick_reply:💰 Sí, recargar otro monto"
-              ]
-            });
+          // 🔹 Enviar mensaje de saldo y opciones sin botones
+          const saldoMessage = `💰 *Saldo disponible: ${saldo} ARS*\n\n` +
+                               `Selecciona una opción respondiendo con el número correspondiente:\n` +
+                               `1️⃣ Recargar 1000 ARS\n` +
+                               `2️⃣ Recargar otro monto\n` +
+                               `3️⃣ No, gracias\n\n` +
+                               `Escribe el número de la opción que deseas elegir.`;
         
-            console.log(`✅ Pregunta de recarga enviada a ${From}: ${response.sid}`);
-            
-            // Guardamos el estado para saber que el usuario está en este flujo
-            await sessionRef.update({ step: "ask_recarga_confirm" });
+          await sendMessage(saldoMessage, From);
         
-            return res.status(200).send("Saldo consultado y esperando confirmación de recarga");
-          } catch (error) {
-            console.error("❌ Error al enviar los botones de recarga con Twilio:", error);
-            throw new Error(`No se pudo enviar la consulta de recarga. Detalles: ${error.message}`);
-          }
+          // Guardamos el estado del usuario para la siguiente respuesta
+          await sessionRef.update({ step: "ask_recarga_confirm" });
+        
+          return res.status(200).send("Saldo consultado y esperando confirmación de recarga");
         }
+        
         case "4": {
           console.log(`🟢 [DEBUG] Opción 6 - Iniciando reporte para: ${From}`);
           await sessionRef.set({ step: "report_issue" }, { merge: true });
-          await sendMessage("🔧 *Reporte de desperfectos*\n\nDescribe el problema encontrado:", From);
+          await sendMessage("🔧 *Reporte de desperfectos*\n\n Un humano analizará el problema y te responderemos a la brevedad.\n Describe el problema encontrado:", From);
           return res.status(200).send("Modo reporte activado");
         }
 
@@ -1511,113 +1561,56 @@ export const handleUserResponse = async (Body, From, res) => {
     }
    
     case "ask_recarga_confirm": {
-      if (Body === "✅ Sí, recargar 1000 $") {
-        // Guardamos el monto directamente y pasamos a la generación de pago
+      const userResponse = Body.trim();
+    
+      if (userResponse === "1") {
         await sessionRef.update({ step: "ask_recarga", recarga: 1000 });
-        return await handleRecarga(From, 1000, res);
-      } 
-      
-      if (Body === "💰 Sí, recargar otro monto") {
+        return await processRecarga(From, res);
+      }
+    
+      if (userResponse === "2") {
         await sessionRef.update({ step: "ask_recarga_custom" });
-        await sendMessage("Por favor, ingresa el monto que deseas recargar en ARS. Ejemplo: 500", From);
+        await sendMessage("¿Cuánto deseas recargar? Ingresa el monto en ARS. Ejemplo: 500", From);
         return res.status(200).send("Esperando monto de recarga");
       }
-      
-      if (Body === "❌ No, gracias") {
-        await sendMessage("Operación cancelada. Escribe 'menu' para volver al menú principal.", From);
+    
+      if (userResponse === "3") {
+        await sendMessage("Entendido, no realizaremos ninguna recarga. Si necesitas algo más, escribe *menu*.", From);
         await sessionRef.update({ step: null, recarga: null });
         return res.status(200).send("Recarga cancelada");
       }
+    
+      await sendMessage("Por favor, responde con *1* para recargar 1000 ARS, *2* para otro monto o *3* para cancelar.", From);
+      return res.status(200).send("Opción inválida en ask_recarga_confirm");
     }
-    // eslint-disable-next-line no-fallthrough
     case "ask_recarga_custom": {
       const monto = parseFloat(Body);
+    
       if (isNaN(monto) || monto <= 0) {
-        await sendMessage("Por favor, ingresa un monto numérico válido. Ejemplo: 500", From);
+        await sendMessage("Por favor, ingresa un monto válido en ARS. Ejemplo: 500", From);
         return res.status(200).send("Monto inválido");
       }
     
-      // Guardamos el monto ingresado y pasamos a la generación del pago
       await sessionRef.update({ step: "ask_recarga", recarga: monto });
-      return await handleRecarga(From, monto, res);
+      return await processRecarga(From, res);
     }
-
     case "ask_recarga": {
-      const monto = parseFloat(Body);
-      
-      if (isNaN(monto) || monto <= 0) {
-        await sendMessage("❌ Ingresa un monto válido en ARS. Ejemplo: 500", From);
-        return res.status(200).send("Monto inválido");
-      }
-    
-      // 🔹 Buscar usuario en Firestore
-      const userSnap = await db.collection("usuarios").doc(From).get();
-      if (!userSnap.exists) {
-        await sendMessage("No encuentro tu usuario. Regístrate con la opción '1'.", From);
-        return res.status(200).send("Usuario no registrado");
-      }
-    
-      const userData = userSnap.data();
-      const userEmail = userData.email || "soporte@jinete.ar";
-    
-      // 🔹 Crear documento en la subcolección "pagos"
-      const pagosRef = db.collection("usuarios").doc(From).collection("pagos");
-      const newPaymentDoc = pagosRef.doc();
-      const docId = newPaymentDoc.id;
-    
-      // 🔹 Generar preferencia de MercadoPago con back_urls
-      const result = await createPreference(
-        userEmail,
-        "Recarga de saldo",
-        1,
-        monto,
-        { phone: From, docId }
-      );
-    
-      if (result.error) {
-        await sendMessage("No pude generar el link de pago. Inténtalo más tarde o escribe 'menu'.", From);
-        return res.status(200).send("Error al crear preferencia MP");
-      }
-    
-      const preference = result.preference;
-      const initPoint = preference.init_point;
-    
-      // 🔹 Guardar estado "pending" en Firestore
-      await newPaymentDoc.set({
-        amount: monto,
-        concepto: "Recarga de saldo",
-        currency: "ARS",
-        metodo: "MercadoPago",
-        mpOrderId: preference.id || "",
-        status: "pending",
-        timestamp: new Date().toISOString(),
-        initPoint,
-      });
-    
-      // 🔹 Enviar link de pago al usuario
-      await sendMessage(
-        `✅ *Recarga generada*\n💰 Monto: *${monto} ARS*\n🔗 Link de pago:\n${initPoint}\n\n` +
-        `📌 *IMPORTANTE:* Paga y tu saldo se actualizará automáticamente.`,
-        From
-      );
-    
-      // 🔹 Actualizar sesión a "await_payment"
-      await sessionRef.update({ step: "await_payment", recarga: monto });
-    
-      return res.status(200).send("Recarga solicitada y esperando pago.");
+      return await processRecarga(From, res);
     }
-    
+            
     case "await_payment": {
-      if (Body.toLowerCase().includes("listo") || Body === "✅ Verificar pago") {
+      const userResponse = Body.trim().toLowerCase();
+    
+      if (userResponse.includes("listo") || userResponse === "verificar pago") {
         await sendMessage("🔍 Verificaremos el estado de tu pago. Un momento...", From);
         return res.status(200).send("Usuario solicita verificar pago");
       }
     
-      if (Body === "❌ Cancelar pago") {
-        // 🔹 Eliminar la recarga pendiente en Firestore
+      if (userResponse.includes("cancelar")) {
+        // 🔹 Buscar y cancelar el pago pendiente en Firestore
         const sessionSnap = await sessionRef.get();
         const sessionData = sessionSnap.data();
-        const monto = sessionData.recarga;
+        const monto = sessionData?.recarga;
     
         const pagosRef = db.collection("usuarios").doc(From).collection("pagos");
         const pendingPaymentSnap = await pagosRef.where("status", "==", "pending").limit(1).get();
@@ -1628,35 +1621,26 @@ export const handleUserResponse = async (Body, From, res) => {
         }
     
         await sessionRef.update({ step: "menu_main", recarga: null });
-        await sendMessage("❌ La recarga ha sido cancelada. Escribe 'Menu' para volver al menú principal.", From);
+        await sendMessage("❌ La recarga ha sido cancelada. Si necesitas algo más, escribe *menu* para volver al menú principal.", From);
         return res.status(200).send("Pago cancelado");
       }
     
-      if (Body === "📜 Menú principal") {
+      if (userResponse.includes("menu")) {
         await sessionRef.update({ step: "menu_main" });
         await sendMainMenu(From);
         return res.status(200).send("Usuario volvió al menú");
       }
     
-      // 🔹 Enviar mensaje con botones de opciones
-      try {
-        const response = await twilioClient.messages.create({
-          from: process.env.TWILIO_PHONE_NUMBER,
-          to: From,
-          body: "⏳ *Aguardando confirmación de pago*.\nSelecciona una opción:",
-          persistentAction: [
-            "quick_reply:✅ Verificar pago",
-            "quick_reply:❌ Cancelar pago",
-            "quick_reply:📜 Menú principal"
-          ]
-        });
+      // 🔹 Si el usuario no escribe algo esperado, darle instrucciones claras
+      await sendMessage(
+        "⏳ *Tu pago sigue pendiente.*\n" +
+        "Cuando hayas completado el pago, escribe *'listo'* para verificar.\n" +
+        "Si deseas cancelar, responde con *'cancelar'*.\n" +
+        "Para volver al menú, escribe *'menu'.*",
+        From
+      );
     
-        console.log(`✅ Menú de pago enviado a ${From}: ${response.sid}`);
-        return res.status(200).send("Esperando pago con opciones interactivas");
-      } catch (error) {
-        console.error("❌ Error al enviar botones de pago con Twilio:", error);
-        throw new Error(`No se pudo enviar el menú de pago. Detalles: ${error.message}`);
-      }
+      return res.status(200).send("Esperando pago, instrucciones enviadas.");
     }
 
     case "report_issue": {
@@ -1675,12 +1659,12 @@ export const handleUserResponse = async (Body, From, res) => {
       // 🔹 Resetea la sesión a menu_main
       await sessionRef.set({ step: "menu_main" }, { merge: true });
     
-      await sendMessage("✅ ¡Reporte registrado! Nuestro equipo lo revisará. Escribe 'Menu' si necesitas algo más.", From);
+      await sendMessage("✅ ¡Reporte registrado! Nuestro equipo lo revisará y en menos de 30 minutos te responderemos. Escribe 'Menu' si necesitas algo más.", From);
     
       return res.status(200).send("Reporte guardado");
     } // ⬅️ Cierre correcto del case
     // 🔹 Cierre de switch
-      break; // <---- Agregar esto evita que el switch siga ejecutándose    
+
     // 🔥 ERROR: Aquí falta cerrar bien el switch antes del default
     default:
       await sendMessage(
