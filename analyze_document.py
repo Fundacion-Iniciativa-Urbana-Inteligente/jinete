@@ -1,4 +1,5 @@
 # analyze_document.py
+import os
 import cv2
 import pytesseract
 import face_recognition
@@ -7,9 +8,12 @@ import json
 import numpy as np
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing import image as keras_image
-
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # ✅ Silenciar TensorFlow
+# Ruta de la imagen
 image_path = sys.argv[1]
-model_path = 'document_classifier.h5'  # Modelo entrenado
+
+# ⚙️ Cargar modelo una vez al inicio
+model = load_model('document_classifier.h5')
 
 def preprocess_image(image_path):
     image = cv2.imread(image_path)
@@ -24,8 +28,7 @@ def detect_faces(image_path):
     image = face_recognition.load_image_file(image_path)
     return face_recognition.face_locations(image)
 
-def classify_document(model_path, image_path):
-    model = load_model(model_path)
+def classify_document(image_path):
     img = keras_image.load_img(image_path, target_size=(224, 224))
     img_array = keras_image.img_to_array(img) / 255.0
     img_array = np.expand_dims(img_array, axis=0)
@@ -34,11 +37,11 @@ def classify_document(model_path, image_path):
     confidence = float(prediction[0][0]) if label == 'ID CARD' else 1 - float(prediction[0][0])
     return label, confidence
 
-def analyze_document(image_path, model_path):
+def analyze_document(image_path):
     image, _ = preprocess_image(image_path)
     text = extract_text(image)
     faces = detect_faces(image_path)
-    label, confidence = classify_document(model_path, image_path)
+    label, confidence = classify_document(image_path)
     
     keywords = ['PASSPORT', 'IDENTITY', 'ID', 'DOCUMENT', 'REPUBLIC']
     has_keywords = any(keyword in text.upper() for keyword in keywords)
@@ -53,5 +56,6 @@ def analyze_document(image_path, model_path):
     return result
 
 if __name__ == '__main__':
-    analysis = analyze_document(image_path, model_path)
-    print(json.dumps(analysis))
+    image_path = sys.argv[1]
+    analysis = analyze_document(image_path)
+    sys.stdout.write(json.dumps(analysis))  # ✅ Imprimir solo JSON puro

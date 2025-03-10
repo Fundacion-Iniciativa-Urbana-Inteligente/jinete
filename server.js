@@ -13,9 +13,8 @@ import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
 import admin from 'firebase-admin';
 import OpenAI from "openai";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { exec } from 'child_process';
+import { spawn } from 'child_process';
 import https from 'https';
-
 
 let currentAccessToken = null;
 let currentRefreshToken = null;
@@ -1713,36 +1712,62 @@ app.post('/api/validate-document', async (req, res) => {
   // Descargar la imagen desde la URL
   const file = fs.createWriteStream(imagePath);
   https.get(url, (response) => {
+    if (response.statusCode !== 200) {
+      console.error(`❌ Error al descargar imagen. Status: ${response.statusCode}`);
+      return res.status(500).json({ error: 'No se pudo descargar la imagen.' });
+    }
+
     response.pipe(file);
+
     file.on('finish', () => {
       file.close();
 
-      // Ejecutar script de Python
-      exec(`python3 analyze_document.py ${imagePath}`, (error, stdout, stderr) => {
-        if (error) {
-          console.error(`Error al analizar documento: ${error.message}`);
-          return res.status(500).json({ error: 'Error al analizar documento.' });
-        }
+      // ⚙️ Usar spawn para separar stdout y stderr
+      const python = spawn('.venv\\Scripts\\python.exe', ['analyze_document.py', imagePath]);
 
-        try {
-          const result = JSON.parse(stdout);
-          console.log('✅ Resultado del análisis:', result);
+      let data = '';
+      let errorData = '';
 
-          res.json(result); // Enviar resultado al frontend
-        } catch (parseError) {
-          console.error('❌ Error al parsear JSON:', parseError.message);
-          res.status(500).json({ error: 'Error al parsear respuesta del análisis.' });
-        } finally {
-          fs.unlinkSync(imagePath); // Eliminar imagen temporal
+      python.stdout.on('data', (chunk) => {
+        data += chunk.toString(); // JSON puro
+      });
+
+      python.stderr.on('data', (chunk) => {
+        errorData += chunk.toString(); // Logs, warnings
+      });
+
+      python.on('close', (code) => {
+        console.log('✅ STDERR (Logs de Python):', errorData);
+        console.log('✅ STDOUT (Resultado JSON):', data);
+
+        // Borrar imagen temporal después de usar
+        fs.unlink(imagePath, (err) => {
+          if (err) console.error('❌ Error al borrar imagen temporal:', err);
+          else console.log('🧹 Imagen temporal borrada.');
+        });
+
+        // ⚙️ FILTRAR SOLO JSON
+        const jsonMatch = data.match(/{[\s\S]*}/); // Solo JSON puro
+        if (jsonMatch) {
+          const jsonStr = jsonMatch[0];
+          try {
+            const result = JSON.parse(jsonStr);
+            return res.json(result);
+          } catch (e) {
+            console.error('❌ JSON mal formado:', jsonStr);
+            return res.status(500).json({ error: 'JSON mal formado', raw: jsonStr });
+          }
+        } else {
+          console.error('❌ No se encontró JSON válido en:', data);
+          return res.status(500).json({ error: 'No se encontró JSON en salida', raw: data });
         }
       });
     });
-  }).on('error', (err) => {
+  }).on('error', (err) => {  // 👈 ESTE cierre correcto del https.get
     console.error('❌ Error al descargar imagen:', err.message);
     res.status(500).json({ error: 'No se pudo descargar la imagen.' });
   });
 });
-
 
 // 🗑️ Job programado para eliminar sesiones inactivas cada 24h
 const clearOldSessions = async () => {

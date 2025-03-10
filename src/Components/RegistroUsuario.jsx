@@ -7,6 +7,7 @@ import { getApp } from "firebase/app";
 import { uploadBytes } from "firebase/storage"; // 👈 Importar esto también
 import './registroUsuario.css';
 import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
 
 
 const app = getApp();
@@ -76,7 +77,7 @@ export default function RegistroUsuario() {
       // ✅ Llamar al backend para analizar la imagen del frente
       let analisisDocumento = {};
       try {
-        const response = await axios.post('http://localhost:8080/api/validate-document', {
+        const response = await axios.post(`${import.meta.env.VITE_BACKEND_URL}/api/validate-document`, {
           url: fotoFrenteURL
         });
         analisisDocumento = response.data;
