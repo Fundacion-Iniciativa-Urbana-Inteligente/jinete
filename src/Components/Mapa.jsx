@@ -119,6 +119,27 @@ export default function Mapa() {
       >
         RANKING
       </motion.button>
+      <motion.button
+        onClick={() => navigate("./registro")} // Redirigir a la página de rankings
+        whileHover={{ scale: 1.2 }}
+        whileTap={{ scale: 0.9 }}
+        style={{
+          position: "absolute",
+          top: "60px",
+          right: "10px",
+          padding: "5px",
+          backgroundColor: "yellow",
+          color: "black",
+          border: "2px solid black",
+          borderRadius: "0px",
+          cursor: "pointer",
+          fontWeight: "bold",
+          fontSize: "16px",
+          zIndex: 1000, // Asegura que esté sobre el mapa
+        }}
+      >
+        HACETE SOCIO DE JINETE.AR
+      </motion.button>
           {bicycles
             .filter((bike) => !bike.is_disabled && !bike.is_reserved && bike.lat !== undefined && bike.lon !== undefined)
             .map((bike) => {

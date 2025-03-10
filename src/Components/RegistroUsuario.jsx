@@ -5,10 +5,14 @@ import { getFirestore, collection, addDoc } from "firebase/firestore";
 import { auth } from "../firebaseConfig";
 import { getApp } from "firebase/app";
 import { uploadBytes } from "firebase/storage"; // 👈 Importar esto también
+import './registroUsuario.css';
+import { useNavigate } from 'react-router-dom';
+
 
 const app = getApp();
 const db = getFirestore(app);
 const storage = getStorage(app);
+
 
 // Definimos los componentes directamente en este archivo
 function Button({ children, ...props }) {
@@ -28,6 +32,7 @@ function Label({ children, ...props }) {
 }
 
 export default function RegistroUsuario() {
+  const navigate = useNavigate(); // ✅ CORRECTO: dentro del componente
   const [form, setForm] = useState({
     usuario: "",
     dni: "",
@@ -58,18 +63,30 @@ export default function RegistroUsuario() {
         throw new Error("El canvas de firma no está listo.");
       }
   
-      // ⚙️ Firma como base64
+      // ⚙️ Subir firma como imagen
       const firmaImagen = sigCanvas.current.getCanvas().toDataURL("image/png"); 
       const firmaStorageRef = ref(storage, `firmas/${form.dni}.png`);
       await uploadString(firmaStorageRef, firmaImagen, "data_url");
       const firmaURL = await getDownloadURL(firmaStorageRef);
-      
   
-      // ✅ Subir archivos del DNI como File (uploadBytes)
+      // ✅ Subir imágenes del DNI (frente y dorso)
       const fotoFrenteURL = await uploadImage(form.fotoFrente, `dni/${form.dni}_frente.png`);
       const fotoDorsoURL = await uploadImage(form.fotoDorso, `dni/${form.dni}_dorso.png`);
   
-      // 📥 Guardar en Firestore
+      // ✅ Llamar al backend para analizar la imagen del frente
+      let analisisDocumento = {};
+      try {
+        const response = await axios.post('http://localhost:8080/api/validate-document', {
+          url: fotoFrenteURL
+        });
+        analisisDocumento = response.data;
+        console.log('✅ Resultado del análisis del documento:', analisisDocumento);
+      } catch (error) {
+        console.error('❌ Error al analizar el documento:', error.message);
+        // No detenemos el flujo, solo notificamos en consola
+      }
+  
+      // 📥 Guardar todo en Firestore, incluyendo análisis del documento
       await addDoc(collection(db, "usuarios"), {
         usuario: form.usuario,
         dni: form.dni,
@@ -78,12 +95,15 @@ export default function RegistroUsuario() {
         fotoDorso: fotoDorsoURL,
         firma: firmaURL,
         aceptaTerminos: form.aceptaTerminos,
+        analisisDocumento, // Guardar análisis como objeto
       });
   
-      alert("Usuario registrado exitosamente");
+      alert("✅ Usuario registrado exitosamente");
+      navigate("/"); // Redirigir al home o donde desees
   
     } catch (error) {
-      console.error("❌ Error al registrar usuario en Firestore", error);
+      console.error("❌ Error al registrar usuario:", error);
+      alert("Hubo un error al registrar el usuario. Intenta nuevamente.");
     }
   };
 
@@ -97,43 +117,80 @@ export default function RegistroUsuario() {
   };
 
   return (
-    <div className="max-w-lg mx-auto p-6 bg-white shadow-lg rounded-lg">
-      <h2 className="text-xl font-bold mb-4">Registro de Usuario</h2>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <Label>Usuario</Label>
-          <Input type="text" value={form.usuario} onChange={(e) => setForm({ ...form, usuario: e.target.value })} required />
+    <div className="form-container">
+      <h2 className="form-title">Registro de Usuario</h2>
+      <form onSubmit={handleSubmit}>
+        <label className="form-label">Usuario</label>
+        <input
+          className="form-input"
+          type="text"
+          value={form.usuario}
+          onChange={(e) => setForm({ ...form, usuario: e.target.value })}
+          required
+        />
+
+        <label className="form-label">Nro DNI</label>
+        <input
+          className="form-input"
+          type="number"
+          value={form.dni}
+          onChange={(e) => setForm({ ...form, dni: e.target.value })}
+          required
+        />
+
+        <label className="form-label">Número de Teléfono</label>
+        <input
+          className="form-input"
+          type="tel"
+          value={form.telefono}
+          onChange={(e) => setForm({ ...form, telefono: e.target.value })}
+          required
+        />
+
+        <label className="form-label">Foto DNI Frente</label>
+        <input
+          className="form-input"
+          type="file"
+          accept="image/*"
+          onChange={(e) => handleFileChange(e, "fotoFrente")}
+          required
+        />
+
+        <label className="form-label">Foto DNI Dorso</label>
+        <input
+          className="form-input"
+          type="file"
+          accept="image/*"
+          onChange={(e) => handleFileChange(e, "fotoDorso")}
+          required
+        />
+
+        <label className="form-label">
+          <input
+            className="form-checkbox"
+            type="checkbox"
+            checked={form.aceptaTerminos}
+            onChange={(e) => setForm({ ...form, aceptaTerminos: e.target.checked })}
+            required
+          />
+          Acepto los <a href="/terminos" className="terms-link">términos y condiciones</a>
+        </label>
+
+        <label className="form-label">Firma Manual</label>
+        <SignatureCanvas
+          ref={sigCanvas}
+          penColor="black"
+          canvasProps={{ className: "signature-canvas" }}
+        />
+        <button type="button" onClick={() => sigCanvas.current?.clear()} className="form-button">
+          Limpiar Firma
+        </button>
+
+        <button type="submit" className="form-button">Registrarse</button>
+
+        <div className="button-container">
+          <button className="button" onClick={() => navigate("/")}>Volver al inicio</button>
         </div>
-        <div>
-          <Label>Nro DNI</Label>
-          <Input type="number" value={form.dni} onChange={(e) => setForm({ ...form, dni: e.target.value })} required />
-        </div>
-        <div>
-          <Label>Número de Teléfono</Label>
-          <Input type="tel" value={form.telefono} onChange={(e) => setForm({ ...form, telefono: e.target.value })} required />
-        </div>
-        <div>
-          <Label>Foto DNI Frente</Label>
-          <Input type="file" accept="image/*" onChange={(e) => handleFileChange(e, "fotoFrente")} required />
-        </div>
-        <div>
-          <Label>Foto DNI Dorso</Label>
-          <Input type="file" accept="image/*" onChange={(e) => handleFileChange(e, "fotoDorso")} required />
-        </div>
-        <div className="flex items-center">
-          <Checkbox checked={form.aceptaTerminos} onChange={(e) => setForm({ ...form, aceptaTerminos: e.target.checked })} required />
-          <span className="ml-2">
-            Acepto los <a href="/terminos" className="text-blue-500">términos y condiciones</a>
-          </span>
-        </div>
-        <div>
-          <Label>Firma Manual</Label>
-          <SignatureCanvas ref={sigCanvas} penColor="black" canvasProps={{ className: "border w-full h-40" }} />
-          <Button type="button" onClick={() => sigCanvas.current?.clear()} className="mt-2">
-            Limpiar Firma
-          </Button>
-        </div>
-        <Button type="submit" className="w-full">Registrarse</Button>
       </form>
     </div>
   );

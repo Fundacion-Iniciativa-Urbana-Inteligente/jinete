@@ -13,6 +13,9 @@ import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
 import admin from 'firebase-admin';
 import OpenAI from "openai";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { exec } from 'child_process';
+import https from 'https';
+
 
 let currentAccessToken = null;
 let currentRefreshToken = null;
@@ -1697,6 +1700,49 @@ app.post('/api/send-message', async (req, res) => {
     res.status(500).json({ message: 'Error al enviar el mensaje.' });
   }
 });
+
+// ID CARD recognition
+app.post('/api/validate-document', async (req, res) => {
+  const { url } = req.body;
+  if (!url) {
+    return res.status(400).json({ error: 'Falta la URL de la imagen.' });
+  }
+
+  const imagePath = './temp_image.jpg'; // Imagen temporal
+
+  // Descargar la imagen desde la URL
+  const file = fs.createWriteStream(imagePath);
+  https.get(url, (response) => {
+    response.pipe(file);
+    file.on('finish', () => {
+      file.close();
+
+      // Ejecutar script de Python
+      exec(`python3 analyze_document.py ${imagePath}`, (error, stdout, stderr) => {
+        if (error) {
+          console.error(`Error al analizar documento: ${error.message}`);
+          return res.status(500).json({ error: 'Error al analizar documento.' });
+        }
+
+        try {
+          const result = JSON.parse(stdout);
+          console.log('✅ Resultado del análisis:', result);
+
+          res.json(result); // Enviar resultado al frontend
+        } catch (parseError) {
+          console.error('❌ Error al parsear JSON:', parseError.message);
+          res.status(500).json({ error: 'Error al parsear respuesta del análisis.' });
+        } finally {
+          fs.unlinkSync(imagePath); // Eliminar imagen temporal
+        }
+      });
+    });
+  }).on('error', (err) => {
+    console.error('❌ Error al descargar imagen:', err.message);
+    res.status(500).json({ error: 'No se pudo descargar la imagen.' });
+  });
+});
+
 
 // 🗑️ Job programado para eliminar sesiones inactivas cada 24h
 const clearOldSessions = async () => {

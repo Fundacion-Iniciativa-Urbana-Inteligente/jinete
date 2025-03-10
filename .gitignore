@@ -23,6 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 .firebase/hosting.ZGlzdA.cache
+.venv
+.github
 
 # Dotenv (Esconder Credenciales)
 .env
