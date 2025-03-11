@@ -8,6 +8,7 @@ import Mapa from "./Components/Mapa";
 import Loader from "./Components/Loader";
 import "bootstrap/dist/css/bootstrap.min.css";
 import RegistroUsuario from "./Components/RegistroUsuario";
+import PoliticaPrivacidad from './Components/PoliticaPrivacidad';
 
 function App() {
   const [loading, setLoading] = useState(() => {
@@ -38,6 +39,7 @@ function App() {
         <Route path="/map" element={<Mapa />} />
         <Route path="/registro" element={<RegistroUsuario />} />
         <Route path="*" element={<NotFound />} />
+        <Route path="/politica-de-privacidad" element={<PoliticaPrivacidad />} />
       </Routes>
     </Router>
   );

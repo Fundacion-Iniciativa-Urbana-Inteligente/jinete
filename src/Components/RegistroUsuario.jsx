@@ -74,32 +74,18 @@ export default function RegistroUsuario() {
       const fotoFrenteURL = await uploadImage(form.fotoFrente, `dni/${form.dni}_frente.png`);
       const fotoDorsoURL = await uploadImage(form.fotoDorso, `dni/${form.dni}_dorso.png`);
   
-      // ✅ Llamar al backend para analizar la imagen del frente
-      let analisisDocumento = {};
-      try {
-        const response = await axios.post(`${import.meta.env.VITE_BACKEND_URL}/api/validate-document`, {
-          url: fotoFrenteURL
-        });
-        analisisDocumento = response.data;
-        console.log('✅ Resultado del análisis del documento:', analisisDocumento);
-      } catch (error) {
-        console.error('❌ Error al analizar el documento:', error.message);
-        // No detenemos el flujo, solo notificamos en consola
-      }
-  
-      // 📥 Guardar todo en Firestore, incluyendo análisis del documento
-      await addDoc(collection(db, "usuarios"), {
+      // ✅ Llamar al backend para registrar usuario (NO análisis)
+      await axios.post(`${import.meta.env.VITE_BACKEND_URL}/api/register-user`, {
         usuario: form.usuario,
         dni: form.dni,
         telefono: form.telefono,
+        aceptaTerminos: form.aceptaTerminos,
         fotoFrente: fotoFrenteURL,
         fotoDorso: fotoDorsoURL,
-        firma: firmaURL,
-        aceptaTerminos: form.aceptaTerminos,
-        analisisDocumento, // Guardar análisis como objeto
+        firma: firmaURL
       });
   
-      alert("✅ Usuario registrado exitosamente");
+      alert("✅ Usuario registrado exitosamente. El análisis se realizará en segundo plano.");
       navigate("/"); // Redirigir al home o donde desees
   
     } catch (error) {
@@ -107,6 +93,7 @@ export default function RegistroUsuario() {
       alert("Hubo un error al registrar el usuario. Intenta nuevamente.");
     }
   };
+  
 
   const fileToBase64 = (file) => {
     return new Promise((resolve, reject) => {
@@ -174,7 +161,7 @@ export default function RegistroUsuario() {
             onChange={(e) => setForm({ ...form, aceptaTerminos: e.target.checked })}
             required
           />
-          Acepto los <a href="/terminos" className="terms-link">términos y condiciones</a>
+          Acepto los <a href="/politica-de-privacidad" className="terms-link">términos y condiciones</a>
         </label>
 
         <label className="form-label">Firma Manual</label>
