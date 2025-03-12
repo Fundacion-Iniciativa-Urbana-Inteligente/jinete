@@ -6,7 +6,7 @@ import NotFound from "./Pages/NotFound";
 import RankingPage from "./Components/RankingPage";
 import Mapa from "./Components/Mapa";
 import Loader from "./Components/Loader";
-import "bootstrap/dist/css/bootstrap.min.css";
+import 'bootstrap-icons/font/bootstrap-icons.css';
 import RegistroUsuario from "./Components/RegistroUsuario";
 import PoliticaPrivacidad from './Components/PoliticaPrivacidad';
 

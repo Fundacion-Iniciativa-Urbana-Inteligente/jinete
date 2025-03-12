@@ -2,6 +2,7 @@
 import { initializeApp } from "firebase/app";
 import { getAnalytics } from "firebase/analytics";
 import { getAuth } from "firebase/auth";
+import { getStorage } from "firebase/storage"; // ✅ Importar storage
 
 
 // Configuración de Firebase
@@ -18,5 +19,6 @@ const firebaseConfig = {
 // Inicialización
 const app = initializeApp(firebaseConfig);
 export const analytics = getAnalytics(app);
+export const storage = getStorage(app); // ✅ EXPORTA STORAGE
 export const auth = getAuth(app);
 auth.languageCode = "es"; // Opcional: Configuración de idioma

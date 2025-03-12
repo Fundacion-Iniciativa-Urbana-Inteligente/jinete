@@ -1701,37 +1701,98 @@ app.post('/api/send-message', async (req, res) => {
   }
 });
 
-// ID CARD recognition
-// ✅ Nuevo flujo: Registro rápido y análisis en background
-app.post('/api/register-user', async (req, res) => {
-  const { usuario, dni, telefono, aceptaTerminos, fotoFrente, fotoDorso, firma } = req.body;
+// Verificacion de usuarios
+// Ruta para verificar si el usuario ya existe
+app.get('/api/check-user', async (req, res) => {
+  const { idUsuario } = req.query;
+
+  console.log("Verificando usuario:", idUsuario);
 
   try {
-    // ✅ Registrar usuario en Firestore con estado "pendiente"
-    const userRef = db.collection("usuarios").doc(dni);  // Usar DNI como ID
+    const decodedIdUsuario = decodeURIComponent(idUsuario); // Decodifica cualquier %2B a +
+
+    const userRef = global.db.collection('usuarios').doc(decodedIdUsuario); // ✅ Usar global.db
+    const doc = await userRef.get();
+
+    if (doc.exists) {
+      console.log(`Usuario encontrado: ${decodedIdUsuario}`);
+      return res.json({ exists: true });
+    } else {
+      console.log(`Usuario NO encontrado: ${decodedIdUsuario}`);
+      return res.json({ exists: false });
+    }
+  } catch (error) {
+    console.error("❌ Error verificando usuario:", error);
+    res.status(500).json({ error: "Error al verificar usuario" });
+  }
+});
+
+// Ruta para registrar un nuevo usuario
+// ✅ Ruta para registrar un nuevo usuario con verificación diferenciada
+app.post('/api/register-user', async (req, res) => {
+  const {
+    idUsuario,       // whatsapp:+549XXXXXXXXX
+    usuario,         // Nombre de usuario
+    dni,             // DNI o Pasaporte
+    telefono,        // Número completo con código de país
+    aceptaTerminos,  // Booleano
+    aceptaPolitica,  // Booleano
+    fotoFrente,      // URL
+    fotoDorso,       // URL
+    firma,           // URL
+    saldo,           // Saldo inicial (500)
+    validado         // false
+  } = req.body;
+
+  console.log(`🔍 Intentando registrar usuario: ${idUsuario}`);
+
+  try {
+    // ✅ 1. Verificar si el ID ya existe
+    const userRef = global.db.collection('usuarios').doc(idUsuario);
+    const doc = await userRef.get();
+
+    if (doc.exists) {
+      console.log(`⚠️ El usuario con ID ${idUsuario} ya está registrado.`);
+      return res.status(400).json({ error: "Este número de WhatsApp ya está registrado." });
+    }
+
+    // ✅ 2. Verificar si el DNI ya existe (búsqueda por campo)
+    const dniQuery = await global.db.collection('usuarios').where('dni', '==', dni).limit(1).get();
+    if (!dniQuery.empty) {
+      console.log(`⚠️ El DNI ${dni} ya está registrado.`);
+      return res.status(400).json({ error: "Este DNI ya está registrado." });
+    }
+
+    // ✅ 3. Verificar si el teléfono ya existe (puede ser distinto al ID)
+    const telQuery = await global.db.collection('usuarios').where('telefono', '==', telefono).limit(1).get();
+    if (!telQuery.empty) {
+      console.log(`⚠️ El teléfono ${telefono} ya está registrado.`);
+      return res.status(400).json({ error: "Este número de teléfono ya está registrado." });
+    }
+
+    // ✅ 4. Registrar usuario si no hay duplicados
     await userRef.set({
       usuario,
       dni,
       telefono,
       aceptaTerminos,
+      aceptaPolitica,
       fotoFrente,
       fotoDorso,
       firma,
-      analisisDocumento: "pendiente"
+      saldo,
+      validado,
+      creado: new Date().toISOString() // Fecha de creación
     });
 
-    // ✅ Responder inmediatamente
-    res.status(200).json({ message: '✅ Usuario registrado exitosamente. El análisis se hará en background.' });
-
-    // ✅ Lanzar análisis en segundo plano
-    analizarDocumentoEnBackground(fotoFrente, dni);
+    console.log(`✅ Usuario ${idUsuario} registrado correctamente.`);
+    res.status(200).json({ message: "Usuario registrado correctamente." });
 
   } catch (error) {
-    console.error('❌ Error al registrar usuario:', error);
-    res.status(500).json({ error: 'Error al registrar usuario.' });
+    console.error("❌ Error registrando usuario:", error);
+    res.status(500).json({ error: "Error registrando usuario, intenta nuevamente." });
   }
 });
-
 
 // ✅ Función para análisis en background
 function analizarDocumentoEnBackground(imageUrl, dni) {

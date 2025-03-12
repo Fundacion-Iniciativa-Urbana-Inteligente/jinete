@@ -1,39 +1,20 @@
 import { useState, useRef } from "react";
 import SignatureCanvas from "react-signature-canvas";
-import { getStorage, ref, uploadString, getDownloadURL } from "firebase/storage";
-import { getFirestore, collection, addDoc } from "firebase/firestore";
-import { auth } from "../firebaseConfig";
-import { getApp } from "firebase/app";
-import { uploadBytes } from "firebase/storage"; // 👈 Importar esto también
-import './registroUsuario.css';
+import { ref, uploadString, getDownloadURL, uploadBytes } from "firebase/storage";
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-
-
-const app = getApp();
-const db = getFirestore(app);
-const storage = getStorage(app);
-
-
-// Definimos los componentes directamente en este archivo
-function Button({ children, ...props }) {
-  return <button {...props} className="p-2 bg-blue-500 text-white rounded">{children}</button>;
-}
-
-function Checkbox(props) {
-  return <input type="checkbox" {...props} className="w-4 h-4" />;
-}
-
-function Input(props) {
-  return <input {...props} className="border p-2 w-full rounded" />;
-}
-
-function Label({ children, ...props }) {
-  return <label {...props} className="block text-gray-700">{children}</label>;
-}
+import imageCompression from 'browser-image-compression';
+import { toast, ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
+import './registroUsuario.css';
+import { storage } from '../firebaseConfig'; // Importa storage
 
 export default function RegistroUsuario() {
-  const navigate = useNavigate(); // ✅ CORRECTO: dentro del componente
+  const navigate = useNavigate();
+  const [isLoading, setIsLoading] = useState(false);
+  const [showTooltip, setShowTooltip] = useState(false);
+  const sigCanvas = useRef(null);
+
   const [form, setForm] = useState({
     usuario: "",
     dni: "",
@@ -41,143 +22,197 @@ export default function RegistroUsuario() {
     fotoFrente: null,
     fotoDorso: null,
     aceptaTerminos: false,
+    aceptaPolitica: false,
   });
-  const sigCanvas = useRef(null);
 
-  const handleFileChange = (e, tipo) => {
+  // ✅ Validaciones
+  const validateForm = () => {
+    const usuarioRegex = /^[a-zA-Z0-9]+$/;
+    const dniRegex = /^[a-zA-Z0-9]+$/;
+    const telefonoRegex = /^\+?[1-9]\d{6,14}$/;
+
+    if (!usuarioRegex.test(form.usuario)) {
+      toast.error("El usuario solo puede contener letras y números.");
+      return false;
+    }
+    if (!dniRegex.test(form.dni)) {
+      toast.error("El DNI/Pasaporte solo debe tener letras y números, sin puntos.");
+      return false;
+    }
+    if (!telefonoRegex.test(form.telefono)) {
+      toast.error("Número incorrecto. Ej: +549XXXXXXXXXX o 549XXXXXXXXXX");
+      return false;
+    }
+    if (!form.aceptaTerminos || !form.aceptaPolitica) {
+      toast.error("Debes aceptar términos y políticas.");
+      return false;
+    }
+    if (!form.fotoFrente || !form.fotoDorso) {
+      toast.error("Debes subir las imágenes del DNI (frente y dorso).");
+      return false;
+    }
+    return true;
+  };
+
+  // ✅ Subida y compresión de imágenes
+  const handleFileChange = async (e, tipo) => {
     const file = e.target.files[0];
     if (file) {
-      setForm({ ...form, [tipo]: file });
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error("La imagen no debe superar los 5MB.");
+        return;
+      }
+      const options = { maxSizeMB: 1, maxWidthOrHeight: 1920, useWebWorker: true };
+      const compressedFile = await imageCompression(file, options);
+      setForm({ ...form, [tipo]: compressedFile });
     }
   };
 
   const uploadImage = async (file, path) => {
     const storageRef = ref(storage, path);
-    await uploadBytes(storageRef, file); // ✅ Para archivos tipo File
+    await uploadBytes(storageRef, file);
     return await getDownloadURL(storageRef);
   };
 
+  // ✅ Enviar formulario
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!validateForm()) return;
+  
+    setIsLoading(true);
     try {
-      if (!sigCanvas.current) {
-        throw new Error("El canvas de firma no está listo.");
-      }
+      let telefonoNormalizado = form.telefono.startsWith('+') ? form.telefono : `+${form.telefono}`;
+      const idUsuario = `whatsapp:${telefonoNormalizado}`;
   
-      // ⚙️ Subir firma como imagen
-      const firmaImagen = sigCanvas.current.getCanvas().toDataURL("image/png"); 
-      const firmaStorageRef = ref(storage, `firmas/${form.dni}.png`);
-      await uploadString(firmaStorageRef, firmaImagen, "data_url");
-      const firmaURL = await getDownloadURL(firmaStorageRef);
-  
-      // ✅ Subir imágenes del DNI (frente y dorso)
-      const fotoFrenteURL = await uploadImage(form.fotoFrente, `dni/${form.dni}_frente.png`);
-      const fotoDorsoURL = await uploadImage(form.fotoDorso, `dni/${form.dni}_dorso.png`);
-  
-      // ✅ Llamar al backend para registrar usuario (NO análisis)
-      await axios.post(`${import.meta.env.VITE_BACKEND_URL}/api/register-user`, {
-        usuario: form.usuario,
-        dni: form.dni,
-        telefono: form.telefono,
-        aceptaTerminos: form.aceptaTerminos,
-        fotoFrente: fotoFrenteURL,
-        fotoDorso: fotoDorsoURL,
-        firma: firmaURL
+      // Verificar duplicado
+      const { data: usuarioExistente } = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/api/check-user`, {
+        params: { idUsuario }
       });
   
-      alert("✅ Usuario registrado exitosamente. El análisis se realizará en segundo plano.");
-      navigate("/"); // Redirigir al home o donde desees
+      if (usuarioExistente.exists) {
+        toast.error("⚠️ Este número de teléfono ya está registrado.");
+        setIsLoading(false);
+        return;
+      }
+  
+      // Subir firma y fotos en paralelo
+      const firmaImagen = sigCanvas.current.getCanvas().toDataURL("image/png");
+      const uploads = [
+        uploadString(ref(storage, `firmas/${form.dni}.png`), firmaImagen, "data_url").then(() =>
+          getDownloadURL(ref(storage, `firmas/${form.dni}.png`))
+        ),
+        uploadImage(form.fotoFrente, `dni/${form.dni}_frente.png`),
+        uploadImage(form.fotoDorso, `dni/${form.dni}_dorso.png`)
+      ];
+  
+      const [firmaURL, fotoFrenteURL, fotoDorsoURL] = await Promise.all(uploads);
+  
+      // Registrar usuario
+      const response = await axios.post(`${import.meta.env.VITE_BACKEND_URL}/api/register-user`, {
+        idUsuario,
+        usuario: form.usuario,
+        dni: form.dni,
+        telefono: telefonoNormalizado,
+        aceptaTerminos: form.aceptaTerminos,
+        aceptaPolitica: form.aceptaPolitica,
+        fotoFrente: fotoFrenteURL,
+        fotoDorso: fotoDorsoURL,
+        firma: firmaURL,
+        saldo: 500,
+        validado: false
+      });
+  
+      toast.success("✅ Usuario registrado exitosamente. ¡Tienes $500 de regalo!");
+      setTimeout(() => navigate("/"), 2000); // Redirigir luego de 2 segundos
   
     } catch (error) {
       console.error("❌ Error al registrar usuario:", error);
-      alert("Hubo un error al registrar el usuario. Intenta nuevamente.");
+  
+      // Mostrar mensaje específico del backend si está disponible
+      if (error.response && error.response.data && error.response.data.error) {
+        toast.error(`❌ ${error.response.data.error}`);
+      } else {
+        toast.error("❌ Error al registrar usuario. Intenta nuevamente.");
+      }
+  
+    } finally {
+      setIsLoading(false); // Siempre apagar el loading
     }
   };
-  
-
-  const fileToBase64 = (file) => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = (error) => reject(error);
-    });
-  };
+    
+  const IsLoading = () => <div className="loading">Cargando, por favor espera...</div>;
 
   return (
     <div className="form-container">
+      <ToastContainer />
+      {isLoading && <IsLoading />}
+
       <h2 className="form-title">Registro de Usuario</h2>
       <form onSubmit={handleSubmit}>
         <label className="form-label">Usuario</label>
-        <input
-          className="form-input"
-          type="text"
-          value={form.usuario}
-          onChange={(e) => setForm({ ...form, usuario: e.target.value })}
-          required
-        />
+        <input type="text" className="form-input" value={form.usuario} onChange={(e) => setForm({ ...form, usuario: e.target.value })} required />
 
-        <label className="form-label">Nro DNI</label>
-        <input
-          className="form-input"
-          type="number"
-          value={form.dni}
-          onChange={(e) => setForm({ ...form, dni: e.target.value })}
-          required
-        />
+        <label className="form-label">DNI / Pasaporte</label>
+        <input type="text" className="form-input" value={form.dni} onChange={(e) => setForm({ ...form, dni: e.target.value })} required />
 
-        <label className="form-label">Número de Teléfono</label>
-        <input
-          className="form-input"
-          type="tel"
-          value={form.telefono}
-          onChange={(e) => setForm({ ...form, telefono: e.target.value })}
-          required
-        />
+        <label className="form-label">
+          Número de Teléfono
+          <span className="tooltip-phone" onClick={() => setShowTooltip(!showTooltip)}>?</span>
+        </label>
+        <input type="tel" className="form-input" placeholder="Ej: +5493764876249 o 5493764876249" value={form.telefono} onChange={(e) => setForm({ ...form, telefono: e.target.value })} required />
+        {showTooltip && (
+          <div className="tooltip-box">
+            <strong>¿Cómo ingresar tu número?</strong>
+            <ul>
+              <li>✅ Empieza con "+" (lo agregamos si falta).</li>
+              <li>✅ Código país + número completo, sin espacios ni guiones.</li>
+              <li>❌ No pongas ceros iniciales.</li>
+              <li>🇦🇷 Argentina: <b>+5491123456789</b> (con "9").</li>
+              <li>🇺🇸 USA: <b>+14155552671</b></li>
+              <li>🇪🇸 España: <b>+34612345678</b></li>
+            </ul>
+            <a href="https://faq.whatsapp.com/1294841057948784/?locale=es_LA" target="_blank" rel="noopener noreferrer">Guía oficial de WhatsApp</a>
+          </div>
+        )}
 
         <label className="form-label">Foto DNI Frente</label>
-        <input
-          className="form-input"
-          type="file"
-          accept="image/*"
-          onChange={(e) => handleFileChange(e, "fotoFrente")}
-          required
-        />
+        <input type="file" className="form-input" accept="image/*" onChange={(e) => handleFileChange(e, "fotoFrente")} required />
 
         <label className="form-label">Foto DNI Dorso</label>
-        <input
-          className="form-input"
-          type="file"
-          accept="image/*"
-          onChange={(e) => handleFileChange(e, "fotoDorso")}
-          required
-        />
+        <input type="file" className="form-input" accept="image/*" onChange={(e) => handleFileChange(e, "fotoDorso")} required />
+        <label className="form-label">Firma Manual</label>
+        <SignatureCanvas ref={sigCanvas} penColor="black" canvasProps={{ className: "signature-canvas" }} />
+        <button type="button" onClick={() => sigCanvas.current?.clear()} className="form-button">Limpiar Firma</button>
+
+        {/* ✅ Términos y condiciones */}
+        <label className="form-label">
+          <input
+            type="checkbox"
+            className="form-checkbox"
+            checked={form.aceptaPolitica}
+            onChange={(e) => setForm({ ...form, aceptaPolitica: e.target.checked })}
+            required
+          />
+          Acepto la <a href="/politica-de-privacidad" className="terms-link">Política de privacidad</a>
+        </label>
 
         <label className="form-label">
           <input
-            className="form-checkbox"
             type="checkbox"
+            className="form-checkbox"
             checked={form.aceptaTerminos}
             onChange={(e) => setForm({ ...form, aceptaTerminos: e.target.checked })}
             required
           />
-          Acepto los <a href="/politica-de-privacidad" className="terms-link">términos y condiciones</a>
+          Acepto los <a href="/terminos" className="terms-link">Términos y condiciones</a>
         </label>
 
-        <label className="form-label">Firma Manual</label>
-        <SignatureCanvas
-          ref={sigCanvas}
-          penColor="black"
-          canvasProps={{ className: "signature-canvas" }}
-        />
-        <button type="button" onClick={() => sigCanvas.current?.clear()} className="form-button">
-          Limpiar Firma
-        </button>
-
+        {/* ✅ Botón enviar */}
         <button type="submit" className="form-button">Registrarse</button>
 
+        {/* ✅ Botón volver al mapa */}
         <div className="button-container">
-          <button className="button" onClick={() => navigate("/")}>Volver al inicio</button>
+          <button type="button" onClick={() => navigate("/")} className="button">Volver al mapa</button>
         </div>
       </form>
     </div>

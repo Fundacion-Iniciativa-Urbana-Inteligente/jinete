@@ -3,127 +3,166 @@ html, body, #root {
   margin: 0;
   padding: 0;
   background-size: cover;
-  overflow-y: auto; /* Activa el scroll */
+  overflow-y: auto;
   font-family: Arial, sans-serif;
-  }
+}
 
 /* Fondo completo del formulario */
 .form-container {
-    height: 100%;
-    background-color: #0d0d23; /* Fondo oscuro */
-    padding: 40px;
-    border-radius: 8px;
-    max-width: 500px;
-    margin: 40px auto;
-    box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.5);
-    color: white;
-    font-family: 'Arial', sans-serif;
-  }
-  
-  /* Títulos */
-  .form-title {
-    text-align: center;
-    font-size: 24px;
-    margin-bottom: 30px;
-    color: white;
-    font-weight: bold;
-    letter-spacing: 1px;
-  }
-  
-  /* Etiquetas de cada campo */
-  .form-label {
-    display: block;
-    margin-bottom: 8px;
-    margin-top: 16px;
-    font-weight: 500;
-    color: #c5c5e0;
-  }
-  
-  /* Inputs y textarea */
-  .form-input,
-  .form-textarea {
-    width: 100%;
-    padding: 12px;
-    margin-bottom: 10px;
-    border: none;
-    border-radius: 4px;
-    background-color: #232343;
-    color: white;
-    font-size: 14px;
-    outline: none;
-  }
-  
-  .form-input::placeholder,
-  .form-textarea::placeholder {
-    color: #999;
-  }
-  
-  /* Checkboxes */
-  .form-checkbox {
-    margin-right: 10px;
-  }
-  
-  /* Botón de envío */
-  .form-button {
-    width: 100%;
-    padding: 15px;
-    background-color: #7b4fe0;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    font-size: 16px;
-    font-weight: bold;
-    letter-spacing: 1px;
-    margin-top: 20px;
-    cursor: pointer;
-    transition: background-color 0.3s ease;
-  }
-  
-  .form-button:hover {
-    background-color: #5c3bb5;
-  }
-  
-  /* Firma canvas */
-  .signature-canvas {
-    width: 100%;
-    height: 150px;
-    border: 2px dashed #c5c5e0;
-    margin-top: 10px;
-    margin-bottom: 20px;
-    background-color: #fff;
-  }
-  
-  /* Link a términos */
-  .terms-link {
-    color: #7b4fe0;
-    text-decoration: none;
-  }
-  
-  .terms-link:hover {
-    text-decoration: underline;
-  }
+  height: 100%;
+  background-color: #0d0d23; /* Fondo oscuro */
+  padding: 40px;
+  border-radius: 8px;
+  max-width: 500px;
+  margin: 40px auto;
+  box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.5);
+  color: white;
+  font-family: 'Arial', sans-serif;
+}
 
-  .button {
-    position: absolute;
-    top: 30px;
-    right: 30px;
-    padding: 5px;
-    background-color: yellow;
-    color: black;
-    border: 2px solid black;
-    border-radius: 0px;
-    cursor: pointer;
-    font-weight: bold;
-    font-size: 16px;
-    z-index: 1000;
-    transform: none;
-    outline-style: none;
-  }
-  
-  .button-container {
-    display: flex;
-    justify-content: center;
-    margin-top: 20px;
-  }
-  
-  
+/* Títulos */
+.form-title {
+  text-align: center;
+  font-size: 24px;
+  margin-bottom: 30px;
+  color: white;
+  font-weight: bold;
+  letter-spacing: 1px;
+}
+
+/* Etiquetas de cada campo */
+.form-label {
+  display: block;
+  margin-bottom: 8px;
+  margin-top: 16px;
+  font-weight: 500;
+  color: #c5c5e0;
+}
+
+/* Inputs y textarea */
+.form-input,
+.form-textarea {
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 10px;
+  border: none;
+  border-radius: 4px;
+  background-color: #232343;
+  color: white;
+  font-size: 14px;
+  outline: none;
+}
+
+.form-input::placeholder,
+.form-textarea::placeholder {
+  color: #999;
+}
+
+/* Checkboxes */
+.form-checkbox {
+  margin-right: 10px;
+}
+
+/* Botón de envío */
+.form-button {
+  width: 100%;
+  padding: 15px;
+  background-color: #7b4fe0;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 16px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  margin-top: 20px;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.form-button:hover {
+  background-color: #5c3bb5;
+}
+
+/* Firma canvas */
+.signature-canvas {
+  width: 100%;
+  height: 150px;
+  border: 2px dashed #c5c5e0;
+  margin-top: 10px;
+  margin-bottom: 20px;
+  background-color: #fff;
+}
+
+/* Link a términos */
+.terms-link {
+  color: #7b4fe0;
+  text-decoration: none;
+}
+
+.terms-link:hover {
+  text-decoration: underline;
+}
+
+/* Botón flotante */
+.button {
+  position: absolute;
+  top: 30px;
+  right: 30px;
+  padding: 5px;
+  background-color: yellow;
+  color: black;
+  border: 2px solid black;
+  border-radius: 0px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 16px;
+  z-index: 1000;
+  transform: none;
+  outline-style: none;
+}
+
+/* Contenedor botón volver */
+.button-container {
+  display: flex;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+/* 🎯 Tooltip "?" personalizado */
+.tooltip-phone {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-left: 8px !important;
+  width: 20px !important;
+  height: 20px !important;
+  background-color: #7b4fe0 !important;
+  color: white !important;
+  border-radius: 50% !important;
+  cursor: pointer !important;
+  font-weight: bold !important;
+  line-height: 20px !important;
+  font-size: 14px !important;
+  transition: background-color 0.3s ease !important;
+  text-align: center !important;
+}
+
+.tooltip-phone:hover {
+  background-color: #5c3bb5 !important;
+}
+
+/* Caja del Tooltip */
+.tooltip-box {
+  position: absolute !important;
+  background-color: #fff !important;
+  color: black !important;
+  padding: 12px !important;
+  border-radius: 8px !important;
+  width: 320px !important;
+  box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.25) !important;
+  z-index: 1000 !important;
+  margin-top: 10px !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+  right: 0 !important;
+}
