@@ -8,6 +8,8 @@ import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import './registroUsuario.css';
 import { storage } from '../firebaseConfig'; // Importa storage
+import PhoneInput from 'react-phone-input-2';
+import 'react-phone-input-2/lib/style.css';
 
 export default function RegistroUsuario() {
   const navigate = useNavigate();
@@ -22,14 +24,17 @@ export default function RegistroUsuario() {
     fotoFrente: null,
     fotoDorso: null,
     aceptaTerminos: false,
-    aceptaPolitica: false,
   });
+  // ✅ Regex para validaciones
+  const telefonoRegex = /^\+?\d{7,15}$/; // Acepta con o sin +, 7 a 15 números
+  const usuarioRegex = /^[a-zA-Z0-9]+$/; // Solo letras y números
+  const dniRegex = /^[a-zA-Z0-9]+$/;     // Solo letras y números
+
+  // ✅ Limpieza del teléfono (quita paréntesis, espacios, guiones, etc.)
+  const cleanPhoneNumber = (phone) => phone.replace(/[^\d+]/g, '');
 
   // ✅ Validaciones
   const validateForm = () => {
-    const usuarioRegex = /^[a-zA-Z0-9]+$/;
-    const dniRegex = /^[a-zA-Z0-9]+$/;
-    const telefonoRegex = /^\+?[1-9]\d{6,14}$/;
 
     if (!usuarioRegex.test(form.usuario)) {
       toast.error("El usuario solo puede contener letras y números.");
@@ -41,10 +46,6 @@ export default function RegistroUsuario() {
     }
     if (!telefonoRegex.test(form.telefono)) {
       toast.error("Número incorrecto. Ej: +549XXXXXXXXXX o 549XXXXXXXXXX");
-      return false;
-    }
-    if (!form.aceptaTerminos || !form.aceptaPolitica) {
-      toast.error("Debes aceptar términos y políticas.");
       return false;
     }
     if (!form.fotoFrente || !form.fotoDorso) {
@@ -114,7 +115,6 @@ export default function RegistroUsuario() {
         dni: form.dni,
         telefono: telefonoNormalizado,
         aceptaTerminos: form.aceptaTerminos,
-        aceptaPolitica: form.aceptaPolitica,
         fotoFrente: fotoFrenteURL,
         fotoDorso: fotoDorsoURL,
         firma: firmaURL,
@@ -159,22 +159,29 @@ export default function RegistroUsuario() {
           Número de Teléfono
           <span className="tooltip-phone" onClick={() => setShowTooltip(!showTooltip)}>?</span>
         </label>
-        <input type="tel" className="form-input" placeholder="Ej: +5493764876249 o 5493764876249" value={form.telefono} onChange={(e) => setForm({ ...form, telefono: e.target.value })} required />
+        <PhoneInput
+          country={'ar'}
+          value={form.telefono}
+          onChange={(phone) => setForm({ ...form, telefono: cleanPhoneNumber(phone) })}
+          inputProps={{
+            name: 'telefono',
+            required: true,
+            className: 'form-input'
+          }}
+        />
         {showTooltip && (
           <div className="tooltip-box">
             <strong>¿Cómo ingresar tu número?</strong>
             <ul>
-              <li>✅ Empieza con "+" (lo agregamos si falta).</li>
+              <li>✅ Se agregará automáticamente el "+" y el código del país.</li>
               <li>✅ Código país + número completo, sin espacios ni guiones.</li>
               <li>❌ No pongas ceros iniciales.</li>
               <li>🇦🇷 Argentina: <b>+5491123456789</b> (con "9").</li>
               <li>🇺🇸 USA: <b>+14155552671</b></li>
               <li>🇪🇸 España: <b>+34612345678</b></li>
             </ul>
-            <a href="https://faq.whatsapp.com/1294841057948784/?locale=es_LA" target="_blank" rel="noopener noreferrer">Guía oficial de WhatsApp</a>
           </div>
         )}
-
         <label className="form-label">Foto DNI Frente</label>
         <input type="file" className="form-input" accept="image/*" onChange={(e) => handleFileChange(e, "fotoFrente")} required />
 
@@ -183,19 +190,6 @@ export default function RegistroUsuario() {
         <label className="form-label">Firma Manual</label>
         <SignatureCanvas ref={sigCanvas} penColor="black" canvasProps={{ className: "signature-canvas" }} />
         <button type="button" onClick={() => sigCanvas.current?.clear()} className="form-button">Limpiar Firma</button>
-
-        {/* ✅ Términos y condiciones */}
-        <label className="form-label">
-          <input
-            type="checkbox"
-            className="form-checkbox"
-            checked={form.aceptaPolitica}
-            onChange={(e) => setForm({ ...form, aceptaPolitica: e.target.checked })}
-            required
-          />
-          Acepto la <a href="/politica-de-privacidad" className="terms-link">Política de privacidad</a>
-        </label>
-
         <label className="form-label">
           <input
             type="checkbox"
@@ -204,7 +198,7 @@ export default function RegistroUsuario() {
             onChange={(e) => setForm({ ...form, aceptaTerminos: e.target.checked })}
             required
           />
-          Acepto los <a href="/terminos" className="terms-link">Términos y condiciones</a>
+          Acepto los <a href="/terminos" className="terms-link">Términos</a> y <a href="/politica-de-privacidad" className="terms-link">Política de privacidad</a>
         </label>
 
         {/* ✅ Botón enviar */}

@@ -1736,7 +1736,6 @@ app.post('/api/register-user', async (req, res) => {
     dni,             // DNI o Pasaporte
     telefono,        // Número completo con código de país
     aceptaTerminos,  // Booleano
-    aceptaPolitica,  // Booleano
     fotoFrente,      // URL
     fotoDorso,       // URL
     firma,           // URL
@@ -1776,7 +1775,6 @@ app.post('/api/register-user', async (req, res) => {
       dni,
       telefono,
       aceptaTerminos,
-      aceptaPolitica,
       fotoFrente,
       fotoDorso,
       firma,
@@ -1792,11 +1790,15 @@ app.post('/api/register-user', async (req, res) => {
     console.error("❌ Error registrando usuario:", error);
     res.status(500).json({ error: "Error registrando usuario, intenta nuevamente." });
   }
+  // ✅ Llamada para analizar automáticamente la imagen del frente:
+analizarDocumentoEnBackground(fotoFrente, idUsuario);
 });
 
-// ✅ Función para análisis en background
-function analizarDocumentoEnBackground(imageUrl, dni) {
-  const imagePath = `./temp_${dni}.jpg`;
+// ✅ Nueva función mejorada para análisis de documentos
+function analizarDocumentoEnBackground(imageUrl, idUsuario) {
+  const imagePath = `./temp_${idUsuario}.jpg`;
+
+  console.log(`📥 Descargando imagen desde: ${imageUrl}`);
 
   const file = fs.createWriteStream(imagePath);
   https.get(imageUrl, (response) => {
@@ -1809,7 +1811,10 @@ function analizarDocumentoEnBackground(imageUrl, dni) {
     file.on('finish', () => {
       file.close();
 
-      const python = spawn('.venv\\Scripts\\python.exe', ['analyze_document.py', imagePath, dni]);
+      console.log(`🔍 Analizando documento para usuario: ${idUsuario}`);
+      
+      // ✅ Ejecutar el script Python (nuevo script)
+      const python = spawn('.venv\\Scripts\\python.exe', ['analyze_document.py', imagePath]);
 
       let data = '';
       let errorData = '';
@@ -1821,6 +1826,7 @@ function analizarDocumentoEnBackground(imageUrl, dni) {
         console.log('✅ STDERR (Python):', errorData);
         console.log('✅ STDOUT (Resultado JSON):', data);
 
+        // ✅ Eliminar imagen temporal
         fs.unlink(imagePath, (err) => {
           if (err) console.error('❌ Error al borrar imagen temporal:', err);
           else console.log('🧹 Imagen temporal borrada.');
@@ -1832,9 +1838,9 @@ function analizarDocumentoEnBackground(imageUrl, dni) {
           const jsonStr = jsonMatch[0];
           try {
             const result = JSON.parse(jsonStr);
-            const userRef = db.collection("usuarios").doc(dni);
+            const userRef = global.db.collection("usuarios").doc(idUsuario);
             await userRef.update({ analisisDocumento: result });
-            console.log(`✅ Análisis completado para DNI: ${dni}`);
+            console.log(`✅ Análisis completado y guardado para usuario: ${idUsuario}`);
           } catch (e) {
             console.error('❌ JSON mal formado:', jsonStr);
           }
@@ -1847,7 +1853,6 @@ function analizarDocumentoEnBackground(imageUrl, dni) {
     console.error('❌ Error al descargar imagen:', err.message);
   });
 }
-
 
 // 🗑️ Job programado para eliminar sesiones inactivas cada 24h
 const clearOldSessions = async () => {

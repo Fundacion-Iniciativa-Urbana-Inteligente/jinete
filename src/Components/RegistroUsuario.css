@@ -166,3 +166,47 @@ html, body, #root {
   line-height: 1.5 !important;
   right: 0 !important;
 }
+/* Ajustar ancho al 100% */
+.react-tel-input {
+  width: 100% !important; /* Ocupa todo el ancho disponible */
+}
+
+/* Darle altura uniforme */
+.react-tel-input .form-control {
+  width: 100%; /* Ajuste horizontal */
+  height: 44px; /* Misma altura que otros inputs (ajustar según tus otros campos) */
+  padding-left: 50px; /* Espacio para el selector de bandera */
+  background-color: #1e1e2f; /* Color de fondo oscuro para igualar otros inputs */
+  border: 1px solid #444; /* Borde sutil */
+  border-radius: 8px; /* Misma curvatura */
+  color: white; /* Color de texto */
+  font-size: 16px; /* Tamaño uniforme */
+  box-shadow: none;
+}
+
+/* Selector de bandera (código país) */
+.react-tel-input .flag-dropdown {
+  background-color: #1e1e2f; /* Mismo color fondo */
+  border: 1px solid #444;
+  border-radius: 8px 0 0 8px; /* Redondeo solo izquierda */
+}
+
+/* Ajustar altura de la bandera */
+.react-tel-input .flag-dropdown.open, 
+.react-tel-input .flag-dropdown {
+  height: 44px; /* Mismo alto */
+}
+
+/* Remover sombra al hacer foco */
+.react-tel-input .form-control:focus {
+  outline: none;
+  box-shadow: none;
+  border: 1px solid #666;
+}
+.react-tel-input input.form-input {
+  margin-left: 43px;
+  width: 480px;
+}
+.react-tel-input .flag-dropdown, .react-tel-input .flag-dropdown.open{
+  background-color: #232343 !important; 
+}
