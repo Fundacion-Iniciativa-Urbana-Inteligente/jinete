@@ -844,6 +844,8 @@ app.post('/api/unlock', async (req, res) => {
 /* -------------------------------------------------------------------------- */
 app.get('/api/token/:bikeId/:userId', async (req, res) => {
   const { bikeId, userId } = req.params;
+  
+  console.log("🛑 Parámetros recibidos:", bikeId, userId); // ✅
 
   if (!bikeId || !userId) {
     return res.status(400).json({ message: 'bikeId y userId son requeridos.' });

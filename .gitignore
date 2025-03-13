@@ -26,6 +26,7 @@ dist-ssr
 .venv
 .github
 venv
+dataset
 
 # Dotenv (Esconder Credenciales)
 .env

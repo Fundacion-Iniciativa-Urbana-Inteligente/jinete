@@ -7,9 +7,9 @@ import imageCompression from 'browser-image-compression';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import './registroUsuario.css';
-import { storage } from '../firebaseConfig'; // Importa storage
-import PhoneInput from 'react-phone-input-2';
-import 'react-phone-input-2/lib/style.css';
+import { storage } from '../firebaseConfig';
+import PhoneInput from 'react-phone-number-input';
+import 'react-phone-number-input/style.css';
 
 export default function RegistroUsuario() {
   const navigate = useNavigate();
@@ -25,27 +25,19 @@ export default function RegistroUsuario() {
     fotoDorso: null,
     aceptaTerminos: false,
   });
-  // ✅ Regex para validaciones
-  const telefonoRegex = /^\+?\d{7,15}$/; // Acepta con o sin +, 7 a 15 números
-  const usuarioRegex = /^[a-zA-Z0-9]+$/; // Solo letras y números
-  const dniRegex = /^[a-zA-Z0-9]+$/;     // Solo letras y números
-
-  // ✅ Limpieza del teléfono (quita paréntesis, espacios, guiones, etc.)
-  const cleanPhoneNumber = (phone) => phone.replace(/[^\d+]/g, '');
 
   // ✅ Validaciones
   const validateForm = () => {
-
-    if (!usuarioRegex.test(form.usuario)) {
+    if (!form.usuario.trim()) {
       toast.error("El usuario solo puede contener letras y números.");
       return false;
     }
-    if (!dniRegex.test(form.dni)) {
+    if (!form.dni.trim()) {
       toast.error("El DNI/Pasaporte solo debe tener letras y números, sin puntos.");
       return false;
     }
-    if (!telefonoRegex.test(form.telefono)) {
-      toast.error("Número incorrecto. Ej: +549XXXXXXXXXX o 549XXXXXXXXXX");
+    if (!form.telefono) {
+      toast.error("Número de teléfono inválido o incompleto.");
       return false;
     }
     if (!form.fotoFrente || !form.fotoDorso) {
@@ -79,23 +71,22 @@ export default function RegistroUsuario() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validateForm()) return;
-  
+
     setIsLoading(true);
     try {
-      let telefonoNormalizado = form.telefono.startsWith('+') ? form.telefono : `+${form.telefono}`;
-      const idUsuario = `whatsapp:${telefonoNormalizado}`;
-  
+      const idUsuario = `whatsapp:${form.telefono}`; // Número completo y limpio
+
       // Verificar duplicado
       const { data: usuarioExistente } = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/api/check-user`, {
         params: { idUsuario }
       });
-  
+
       if (usuarioExistente.exists) {
         toast.error("⚠️ Este número de teléfono ya está registrado.");
         setIsLoading(false);
         return;
       }
-  
+
       // Subir firma y fotos en paralelo
       const firmaImagen = sigCanvas.current.getCanvas().toDataURL("image/png");
       const uploads = [
@@ -105,15 +96,15 @@ export default function RegistroUsuario() {
         uploadImage(form.fotoFrente, `dni/${form.dni}_frente.png`),
         uploadImage(form.fotoDorso, `dni/${form.dni}_dorso.png`)
       ];
-  
+
       const [firmaURL, fotoFrenteURL, fotoDorsoURL] = await Promise.all(uploads);
-  
+
       // Registrar usuario
-      const response = await axios.post(`${import.meta.env.VITE_BACKEND_URL}/api/register-user`, {
+      await axios.post(`${import.meta.env.VITE_BACKEND_URL}/api/register-user`, {
         idUsuario,
         usuario: form.usuario,
         dni: form.dni,
-        telefono: telefonoNormalizado,
+        telefono: form.telefono,
         aceptaTerminos: form.aceptaTerminos,
         fotoFrente: fotoFrenteURL,
         fotoDorso: fotoDorsoURL,
@@ -121,25 +112,18 @@ export default function RegistroUsuario() {
         saldo: 500,
         validado: false
       });
-  
+
       toast.success("✅ Usuario registrado exitosamente. ¡Tienes $500 de regalo!");
-      setTimeout(() => navigate("/"), 2000); // Redirigir luego de 2 segundos
-  
+      setTimeout(() => navigate("/"), 2000);
+
     } catch (error) {
       console.error("❌ Error al registrar usuario:", error);
-  
-      // Mostrar mensaje específico del backend si está disponible
-      if (error.response && error.response.data && error.response.data.error) {
-        toast.error(`❌ ${error.response.data.error}`);
-      } else {
-        toast.error("❌ Error al registrar usuario. Intenta nuevamente.");
-      }
-  
+      toast.error("❌ Error al registrar usuario. Intenta nuevamente.");
     } finally {
-      setIsLoading(false); // Siempre apagar el loading
+      setIsLoading(false);
     }
   };
-    
+
   const IsLoading = () => <div className="loading">Cargando, por favor espera...</div>;
 
   return (
@@ -155,56 +139,32 @@ export default function RegistroUsuario() {
         <label className="form-label">DNI / Pasaporte</label>
         <input type="text" className="form-input" value={form.dni} onChange={(e) => setForm({ ...form, dni: e.target.value })} required />
 
-        <label className="form-label">
-          Número de Teléfono
-          <span className="tooltip-phone" onClick={() => setShowTooltip(!showTooltip)}>?</span>
-        </label>
+        <label className="form-label">Número de Teléfono</label>
         <PhoneInput
-          country={'ar'}
+          placeholder="Ingresa tu número de teléfono"
           value={form.telefono}
-          onChange={(phone) => setForm({ ...form, telefono: cleanPhoneNumber(phone) })}
-          inputProps={{
-            name: 'telefono',
-            required: true,
-            className: 'form-input'
-          }}
+          onChange={(value) => setForm({ ...form, telefono: value })}
+          defaultCountry="AR"
+          international
+          countryCallingCodeEditable={false}
         />
-        {showTooltip && (
-          <div className="tooltip-box">
-            <strong>¿Cómo ingresar tu número?</strong>
-            <ul>
-              <li>✅ Se agregará automáticamente el "+" y el código del país.</li>
-              <li>✅ Código país + número completo, sin espacios ni guiones.</li>
-              <li>❌ No pongas ceros iniciales.</li>
-              <li>🇦🇷 Argentina: <b>+5491123456789</b> (con "9").</li>
-              <li>🇺🇸 USA: <b>+14155552671</b></li>
-              <li>🇪🇸 España: <b>+34612345678</b></li>
-            </ul>
-          </div>
-        )}
+
         <label className="form-label">Foto DNI Frente</label>
         <input type="file" className="form-input" accept="image/*" onChange={(e) => handleFileChange(e, "fotoFrente")} required />
 
         <label className="form-label">Foto DNI Dorso</label>
         <input type="file" className="form-input" accept="image/*" onChange={(e) => handleFileChange(e, "fotoDorso")} required />
+
         <label className="form-label">Firma Manual</label>
         <SignatureCanvas ref={sigCanvas} penColor="black" canvasProps={{ className: "signature-canvas" }} />
         <button type="button" onClick={() => sigCanvas.current?.clear()} className="form-button">Limpiar Firma</button>
+
         <label className="form-label">
-          <input
-            type="checkbox"
-            className="form-checkbox"
-            checked={form.aceptaTerminos}
-            onChange={(e) => setForm({ ...form, aceptaTerminos: e.target.checked })}
-            required
-          />
+          <input type="checkbox" className="form-checkbox" checked={form.aceptaTerminos} onChange={(e) => setForm({ ...form, aceptaTerminos: e.target.checked })} required />
           Acepto los <a href="/terminos" className="terms-link">Términos</a> y <a href="/politica-de-privacidad" className="terms-link">Política de privacidad</a>
         </label>
 
-        {/* ✅ Botón enviar */}
         <button type="submit" className="form-button">Registrarse</button>
-
-        {/* ✅ Botón volver al mapa */}
         <div className="button-container">
           <button type="button" onClick={() => navigate("/")} className="button">Volver al mapa</button>
         </div>
