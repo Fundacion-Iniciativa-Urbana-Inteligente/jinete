@@ -103,11 +103,11 @@ html, body, #root {
   text-decoration: underline;
 }
 
-/* Botón flotante */
-.button {
+/* Botón flotante para volver al mapa */
+.button-float {
   position: absolute;
-  top: 30px;
   right: 30px;
+  top: 30px;
   padding: 5px;
   background-color: yellow;
   color: black;
@@ -117,16 +117,23 @@ html, body, #root {
   font-weight: bold;
   font-size: 16px;
   z-index: 1000;
-  transform: none;
   outline-style: none;
 }
 
-/* Contenedor botón volver */
-.button-container {
-  display: flex;
-  justify-content: center;
-  margin-top: 20px;
+/* Botón normal para eliminar cuenta */
+.button-normal {
+  padding: 10px 20px;
+  background-color: red;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 16px;
+  margin: 10px auto;
+  display: block;
 }
+
 
 /* 🎯 Tooltip "?" personalizado */
 .tooltip-phone {

@@ -9,6 +9,8 @@ import Loader from "./Components/Loader";
 import 'bootstrap-icons/font/bootstrap-icons.css';
 import RegistroUsuario from "./Components/RegistroUsuario";
 import PoliticaPrivacidad from './Components/PoliticaPrivacidad';
+import EliminarCuenta from './Components/EliminarCuenta';
+import Terminos from './Components/TerminosCondiciones';
 
 function App() {
   const [loading, setLoading] = useState(() => {
@@ -40,6 +42,8 @@ function App() {
         <Route path="/registro" element={<RegistroUsuario />} />
         <Route path="*" element={<NotFound />} />
         <Route path="/politica-de-privacidad" element={<PoliticaPrivacidad />} />
+        <Route path="/eliminar-cuenta" element={<EliminarCuenta />} />
+        <Route path="/terminos" element={<Terminos />} />
       </Routes>
     </Router>
   );

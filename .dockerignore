@@ -1,0 +1,73 @@
+# ========================================
+# Ignorar carpetas y archivos pesados o innecesarios
+# ========================================
+
+# Dependencias locales (se instalan dentro del contenedor)
+node_modules/
+
+# Entornos virtuales de Python
+.venv/
+
+# Datasets, modelos, y scripts de ML
+dataset/
+document_classifier.h5
+document_classifier_old.h5
+analyze_document.py
+train_document_classifier.py
+
+# Carpetas de prueba o temporales
+temp_whatsapp/
+quickstart-docker/
+
+# Firebase y Docker infra
+.firebase/
+.firebase.json
+.firebaserc
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Repositorios y configuración de control de versiones
+.git
+.github/
+.gitignore
+.gitattributes
+
+# Archivos temporales del sistema y de editores
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs y errores
+npm-debug.log
+yarn-debug.log
+pnpm-debug.log
+*.log
+
+# Tests y cobertura
+coverage/
+*.test.js
+*.spec.js
+jest.config.js
+
+# Archivos comprimidos, backups y claves
+*.zip
+*.tar.gz
+*.rar
+*.7z
+*.bak
+*.pem
+*.key
+*.crt
+
+# ========================================
+# Permitir solo lo necesario para producción
+# ========================================
+
+# ⚙️ Mantener src (código), public (assets), y archivos de configuración
+!src/
+!public/
+!package.json
+!package-lock.json
+!server.js

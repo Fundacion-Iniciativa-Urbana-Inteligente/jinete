@@ -844,7 +844,7 @@ app.post('/api/unlock', async (req, res) => {
 /* -------------------------------------------------------------------------- */
 app.get('/api/token/:bikeId/:userId', async (req, res) => {
   const { bikeId, userId } = req.params;
-  
+
   console.log("🛑 Parámetros recibidos:", bikeId, userId); // ✅
 
   if (!bikeId || !userId) {
@@ -1793,7 +1793,7 @@ app.post('/api/register-user', async (req, res) => {
     res.status(500).json({ error: "Error registrando usuario, intenta nuevamente." });
   }
   // ✅ Llamada para analizar automáticamente la imagen del frente:
-analizarDocumentoEnBackground(fotoFrente, idUsuario);
+// analizarDocumentoEnBackground(fotoFrente, idUsuario);
 });
 
 // ✅ Nueva función mejorada para análisis de documentos

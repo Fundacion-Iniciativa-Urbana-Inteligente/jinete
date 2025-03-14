@@ -6,7 +6,7 @@ import axios from 'axios';
 import imageCompression from 'browser-image-compression';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
-import './registroUsuario.css';
+import './RegistroUsuario.css';
 import { storage } from '../firebaseConfig';
 import PhoneInput from 'react-phone-number-input';
 import 'react-phone-number-input/style.css';
@@ -165,9 +165,14 @@ export default function RegistroUsuario() {
         </label>
 
         <button type="submit" className="form-button">Registrarse</button>
-        <div className="button-container">
-          <button type="button" onClick={() => navigate("/")} className="button">Volver al mapa</button>
-        </div>
+        <button type="button" onClick={() => navigate("/")} className="button-float">
+          Volver al mapa
+        </button>
+
+        <button type="button" onClick={() => navigate("/eliminar-cuenta")} className="button-normal">
+          Eliminar cuenta
+        </button>
+
       </form>
     </div>
   );
