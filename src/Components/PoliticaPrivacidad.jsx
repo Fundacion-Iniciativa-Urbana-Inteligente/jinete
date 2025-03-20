@@ -1,122 +1,120 @@
-
 import React from "react";
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
 
-const PrivacyPolicy = () => {
+const PoliticaPrivacidad = () => {
   const navigate = useNavigate();
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-10 bg-white rounded-xl shadow-lg text-gray-800">
-      <div className="flex justify-end mb-4">
-        <button
-          type="button"
-          onClick={() => navigate("/registro")}
-          className="bg-blue-600 text-white py-2 px-4 rounded-lg shadow hover:bg-blue-700 transition"
-        >
-          Volver al Registro
-        </button>
-      </div>
-      <h1 className="text-3xl font-bold text-center mb-6">Política de Privacidad</h1>
-      <p className="text-center text-sm text-gray-600">Última actualización: 11 de marzo de 2025</p>
-
-      <p className="mt-4">
-        Bienvenido a <strong>Jinete.ar</strong>, una aplicación de alquiler de bicicletas inteligentes operada por la
-        <strong> Fundación Iniciativa Urbana Inteligente (FIUI)</strong>. Nos comprometemos a proteger la privacidad de nuestros
-        usuarios y cumplir con todas las leyes de protección de datos aplicables.
+      <h1 className="text-3xl font-bold text-center mb-6" style={{ color: "black" }} >📜 Política de Privacidad</h1>
+      <p className="text-center text-sm text-gray-600">Última actualización: 19 de marzo de 2025</p>
+      <p className="mb-4 text-gray-600">
+        En <strong>Jinete.ar</strong>, valoramos tu privacidad y nos comprometemos a proteger tu información personal. 
+        Esta Política de Privacidad describe cómo recopilamos, usamos y protegemos tus datos, conforme a la Ley 25.326 
+        de Protección de Datos Personales en Argentina y otras normativas aplicables.
       </p>
 
-      <h2 className="text-2xl font-semibold mt-6">1. Información que recolectamos</h2>
-      <ul className="list-disc list-inside mt-2">
-        <li>Datos personales: nombre, apellido, correo electrónico, teléfono, documento de identidad.</li>
-        <li>Ubicación en tiempo real para operación de bicicletas.</li>
-        <li>Información de pago (procesada por MercadoPago, no almacenamos datos de tarjetas).</li>
-        <li>Historial de uso: viajes, kilómetros recorridos.</li>
-        <li>Datos del dispositivo: sistema operativo, identificadores únicos, IP.</li>
-        <li>Imágenes y documentos para verificación de identidad.</li>
+      {/* 1️⃣ Disposiciones Generales */}
+      <h2 className="text-2xl font-semibold mt-6">📌 1. Disposiciones Generales</h2>
+      <p className="mt-2">
+        Esta Política de Privacidad regula el tratamiento de los datos personales de los usuarios de Jinete.ar, 
+        incluyendo su recopilación, uso, almacenamiento y protección.  
+        Al utilizar nuestros servicios, aceptas los términos aquí expuestos.
+      </p>
+
+      {/* 2️⃣ Marco Normativo */}
+      <h2 className="text-2xl font-semibold mt-6">📌 2. Marco Normativo</h2>
+      <p className="mt-2">
+        Esta política se ajusta a la normativa vigente en Argentina, incluyendo:
+      </p>
+      <ul className="list-disc pl-6 mt-2">
+        <li><strong>Ley 25.326 de Protección de Datos Personales:</strong> Regula el tratamiento de datos personales en Argentina.</li>
+        <li><strong>Decreto 1558/2001:</strong> Crea la Dirección Nacional de Protección de Datos Personales (DNPDP).</li>
+        <li><strong>Reglamento General de Protección de Datos (GDPR):</strong> Aplicable en caso de usuarios europeos.</li>
       </ul>
 
-      <h2 className="text-2xl font-semibold mt-6">2. Finalidad del uso de datos</h2>
-      <p className="mt-2">Utilizamos tus datos para:</p>
-      <ul className="list-disc list-inside mt-2">
-        <li>Gestionar tu cuenta y validar tu identidad.</li>
-        <li>Prestar y mejorar el servicio de bicicletas.</li>
-        <li>Verificación de identidad mediante reconocimiento facial y OCR.</li>
-        <li>Monitorear la ubicación de bicicletas y zonas de aparcamiento.</li>
-        <li>Gestión de pagos y cobros.</li>
-        <li>Notificaciones importantes y soporte.</li>
-        <li>Cumplir obligaciones legales y de seguridad.</li>
+      {/* 3️⃣ Datos que recopilamos */}
+      <h2 className="text-2xl font-semibold mt-6">📌 3. Datos que Recopilamos</h2>
+      <ul className="list-disc pl-6 mt-2">
+        <li><strong>Datos de cuenta:</strong> Nombre, DNI, número de teléfono.</li>
+        <li><strong>Información de pago:</strong> Transacciones procesadas con Mercado Pago.</li>
+        <li><strong>Datos de ubicación:</strong> Ubicación de bicicletas y datos necesarios para el alquiler.</li>
+        <li><strong>Registros de interacción:</strong> Chats y solicitudes de soporte en WhatsApp.</li>
       </ul>
 
-      <h2 className="text-2xl font-semibold mt-6">3. Compartición de datos</h2>
-      <p className="mt-2">Podemos compartir tus datos con:</p>
-      <ul className="list-disc list-inside mt-2">
-        <li>Proveedores tecnológicos: Twilio, MercadoPago, Jimi IoT, Firebase.</li>
-        <li>Autoridades públicas cuando sea requerido por ley.</li>
-        <li>Compañías de seguro si contratas un seguro desde la app.</li>
-      </ul>
-      <p><strong>Nunca venderemos tu información a terceros.</strong></p>
-
-      <h2 className="text-2xl font-semibold mt-6">4. Seguridad de los datos</h2>
-      <ul className="list-disc list-inside mt-2">
-        <li>Cifrado de datos en tránsito y reposo.</li>
-        <li>Autenticación segura y acceso restringido.</li>
-        <li>Monitoreo de accesos no autorizados.</li>
+      {/* 4️⃣ Uso de los datos */}
+      <h2 className="text-2xl font-semibold mt-6">📌 4. ¿Cómo Usamos Tu Información?</h2>
+      <ul className="list-disc pl-6 mt-2">
+        <li>Autenticación de usuarios y gestión de cuentas.</li>
+        <li>Procesamiento de pagos y gestión de saldo.</li>
+        <li>Desbloqueo y administración de bicicletas.</li>
+        <li>Envío de notificaciones y asistencia por WhatsApp.</li>
       </ul>
 
-      <h2 className="text-2xl font-semibold mt-6">5. Tus derechos</h2>
-      <p className="mt-2">Puedes ejercer los siguientes derechos:</p>
-      <ul className="list-disc list-inside mt-2">
+      {/* 5️⃣ Compartición de datos */}
+      <h2 className="text-2xl font-semibold mt-6">📌 5. Con Quién Compartimos Tu Información</h2>
+      <ul className="list-disc pl-6 mt-2">
+        <li><strong>Mercado Pago:</strong> Procesamiento de pagos y recargas.</li>
+        <li><strong>Twilio:</strong> Envío de mensajes de WhatsApp.</li>
+        <li><strong>Firebase:</strong> Almacenamiento y autenticación de usuarios.</li>
+        <li><strong>JIMI IoT:</strong> Gestión del desbloqueo de bicicletas.</li>
+      </ul>
+
+      {/* 6️⃣ Seguridad */}
+      <h2 className="text-2xl font-semibold mt-6">📌 6. Seguridad y Almacenamiento de Datos</h2>
+      <p className="mt-2">
+        Implementamos medidas de seguridad como cifrado de datos y almacenamiento seguro en Firebase para proteger tu información.
+      </p>
+
+      {/* 7️⃣ Retención y eliminación de datos */}
+      <h2 className="text-2xl font-semibold mt-6">📌 7. Retención y Eliminación de Datos</h2>
+      <p className="mt-2">
+        Almacenamos tus datos mientras tengas una cuenta activa en Jinete.ar. Puedes solicitar la eliminación de tu cuenta en cualquier momento.
+      </p>
+      <button 
+        onClick={() => navigate("/eliminar-cuenta")} 
+        className="mt-4 bg-red-600 text-white py-2 px-4 rounded-lg shadow hover:bg-red-700 transition"
+      >
+        Eliminar mi cuenta
+      </button>
+
+      {/* 8️⃣ Derechos del usuario */}
+      <h2 className="text-2xl font-semibold mt-6">📌 8. Derechos de los Usuarios</h2>
+      <ul className="list-disc pl-6 mt-2">
         <li>Acceder a tus datos personales.</li>
-        <li>Corrección de datos incorrectos.</li>
-        <li>Eliminación de tus datos, salvo obligaciones legales.</li>
-        <li>Oposición al tratamiento de datos para ciertos fines.</li>
+        <li>Solicitar la corrección o eliminación de tus datos.</li>
+        <li>Oponerte al uso de tu información para ciertos fines.</li>
+      </ul>
+      <p className="mt-2">
+        Para ejercer estos derechos, contáctanos en <a href="mailto:info@jinete.ar" className="text-blue-600">info@jinete.ar</a>.
+      </p>
+
+      {/* 9️⃣ Contacto y reclamos */}
+      <h2 className="text-2xl font-semibold mt-6">📌 9. Contacto y Reclamos</h2>
+      <p className="mt-2">
+        Si tienes consultas sobre esta política, puedes comunicarte con nosotros:
+      </p>
+      <ul className="list-disc pl-6 mt-2">
+        <li><strong>Correo electrónico:</strong> <a href="mailto:info@jinete.ar" className="text-blue-600">info@jinete.ar</a></li>
+        <li><strong>Teléfono:</strong> 3764-876249</li>
+        <li><strong>Autoridad de Protección de Datos:</strong> <a href="https://www.argentina.gob.ar/aaip/datospersonales" className="text-blue-600">DNPDP</a></li>
       </ul>
 
-      <h2 className="text-2xl font-semibold mt-6">6. Eliminación de datos</h2>
+      {/* 10️⃣ Cambios en la política */}
+      <h2 className="text-2xl font-semibold mt-6">📌 10. Modificaciones a Esta Política</h2>
       <p className="mt-2">
-        Puedes solicitar la eliminación de tu cuenta y datos enviando un correo a:
-        <strong> info@jinete.ar</strong>.
+        Podemos actualizar esta política ocasionalmente. Te notificaremos sobre cambios importantes mediante nuestras plataformas.
       </p>
 
-      <h2 className="text-2xl font-semibold mt-6">7. Privacidad infantil</h2>
-      <p className="mt-2">
-        Nuestra aplicación <strong>no está dirigida a menores de 13 años</strong>. Si descubrimos que se recopilaron datos de un menor,
-        los eliminaremos de inmediato. Si crees que tu hijo/a nos proporcionó datos, contáctanos.
-      </p>
-
-      <h2 className="text-2xl font-semibold mt-6">8. Cambios a esta política</h2>
-      <p className="mt-2">
-        Nos reservamos el derecho de actualizar esta Política de Privacidad. Notificaremos cualquier cambio importante a través de la app o por email.
-      </p>
-      <h2 className="text-2xl font-semibold mt-6">9. Tratamiento de imágenes de documentos de identidad (DNI)</h2>
-<p className="mt-2">
-  Para garantizar la seguridad del servicio y validar la identidad de nuestros usuarios, podemos solicitar y procesar imágenes de documentos de identidad oficiales (por ejemplo, DNI, pasaporte o licencia de conducir). Estas imágenes se utilizan exclusivamente para los siguientes fines:
-</p>
-<ul className="list-disc list-inside mt-2">
-  <li>Verificar la identidad del usuario mediante procesos automáticos y/o manuales, incluyendo el uso de inteligencia artificial (OCR y reconocimiento facial) para prevenir fraudes.</li>
-  <li>Asociar la identidad verificada a la cuenta del usuario para permitir el uso del sistema de bicicletas.</li>
-  <li>Cumplir con requisitos legales y de seguridad, incluyendo la cooperación con autoridades en caso de incidentes.</li>
-</ul>
-<p className="mt-2">
-  Las imágenes recolectadas son procesadas a través de sistemas seguros, incluyendo servidores protegidos y canales cifrados (TLS/HTTPS). Solo el personal autorizado o los sistemas automáticos de validación acceden a esta información.
-</p>
-<p className="mt-2">
-  No compartimos estas imágenes con terceros no autorizados. Las mismas se conservan únicamente durante el tiempo necesario para los fines indicados y pueden ser eliminadas a solicitud del usuario, siempre que no exista una obligación legal de conservación.
-</p>
-<p className="mt-2">
-  En cualquier momento, el usuario puede solicitar información adicional o la eliminación de su documento enviando un correo a: <strong>info@jinete.ar</strong>.
-</p>
-
-
-      <h2 className="text-2xl font-semibold mt-6">10. Contacto</h2>
-      <p className="mt-2">Para consultas sobre privacidad y protección de datos:</p>
-      <ul className="list-disc list-inside mt-2">
-        <li><strong>Correo electrónico:</strong> info@jinete.ar</li>
-        <li><strong>Teléfono/WhatsApp:</strong> +54 9 376 487 6249</li>
-        <li><strong>Dirección postal:</strong> Av Uruguay 2651 Piso 1, Posadas, Misiones, Argentina</li>
-      </ul>
+      {/* Botón de regreso */}
+      <div className="button-container">
+           <a href="/registro">
+            <button className="button">Volver al registro</button>
+           </a>
+        </div>
     </div>
   );
 };
 
-export default PrivacyPolicy;
+export default PoliticaPrivacidad;

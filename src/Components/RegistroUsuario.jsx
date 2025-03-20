@@ -10,6 +10,7 @@ import './RegistroUsuario.css';
 import { storage } from '../firebaseConfig';
 import PhoneInput from 'react-phone-number-input';
 import 'react-phone-number-input/style.css';
+import { motion } from "framer-motion";
 
 export default function RegistroUsuario() {
   const navigate = useNavigate();
@@ -165,9 +166,28 @@ export default function RegistroUsuario() {
         </label>
 
         <button type="submit" className="form-button">Registrarse</button>
-        <button type="button" onClick={() => navigate("/")} className="button-float">
-          Volver al mapa
-        </button>
+        <motion.button
+                  onClick={() => navigate("/")}
+                  whileHover={{ scale: 1.2 }}
+                  whileTap={{ scale: 0.9 }}
+                  style={{
+                    position: "fixed",   // Fijado en la pantalla
+                    top: "10px",         // Ajusta la posición vertical
+                    left: "10px",        // Ajusta la posición horizontal
+                    padding: "4px 50px",
+                    backgroundColor: "black",
+                    color: "white",
+                    border: "2px solid white",
+                    borderRadius: "0px",
+                    cursor: "pointer",
+                    fontSize: "18px",
+                    fontWeight: "bold",
+                    marginBottom: "10px",
+                    zIndex: 1000,       // Asegura que esté por encima de otros elementos
+                  }}
+                >
+                  ← Volver al inicio
+                </motion.button>
 
         <button type="button" onClick={() => navigate("/eliminar-cuenta")} className="button-normal">
           Eliminar cuenta

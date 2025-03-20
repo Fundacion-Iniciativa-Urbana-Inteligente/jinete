@@ -97,9 +97,10 @@ export default function Mapa() {
       />
 
 
-              {/* BOTÓN RANKINGS - TOP LEFT */}
-      <motion.button
-        onClick={() => navigate("./ranking")} // Redirigir a la página de rankings
+              {/* BOTÓNES - TOP LEFT */}
+
+                    <motion.button
+        onClick={() => navigate("./help")} // Redirigir a la página de rankings
         whileHover={{ scale: 1.2 }}
         whileTap={{ scale: 0.9 }}
         style={{
@@ -117,7 +118,7 @@ export default function Mapa() {
           zIndex: 1000, // Asegura que esté sobre el mapa
         }}
       >
-        RANKING
+        ¿COMO FUNCIONA?
       </motion.button>
       <motion.button
         onClick={() => navigate("./registro")} // Redirigir a la página de rankings
@@ -125,7 +126,7 @@ export default function Mapa() {
         whileTap={{ scale: 0.9 }}
         style={{
           position: "absolute",
-          top: "60px",
+          top: "50px",
           right: "10px",
           padding: "5px",
           backgroundColor: "yellow",
@@ -139,6 +140,27 @@ export default function Mapa() {
         }}
       >
         HACETE SOCIO DE JINETE.AR
+      </motion.button>
+      <motion.button
+        onClick={() => navigate("./ranking")} // Redirigir a la página de rankings
+        whileHover={{ scale: 1.2 }}
+        whileTap={{ scale: 0.9 }}
+        style={{
+          position: "absolute",
+          top: "90px",
+          right: "10px",
+          padding: "5px",
+          backgroundColor: "yellow",
+          color: "black",
+          border: "2px solid black",
+          borderRadius: "0px",
+          cursor: "pointer",
+          fontWeight: "bold",
+          fontSize: "16px",
+          zIndex: 1000, // Asegura que esté sobre el mapa
+        }}
+      >
+        RANKING
       </motion.button>
           {bicycles
             .filter((bike) => !bike.is_disabled && !bike.is_reserved && bike.lat !== undefined && bike.lon !== undefined)

@@ -11,11 +11,15 @@ import RegistroUsuario from "./Components/RegistroUsuario";
 import PoliticaPrivacidad from './Components/PoliticaPrivacidad';
 import EliminarCuenta from './Components/EliminarCuenta';
 import Terminos from './Components/TerminosCondiciones';
+import Help from "./Pages/Helpme";
 
 function App() {
   const [loading, setLoading] = useState(() => {
     return sessionStorage.getItem("appLoaded") ? false : true;
   });
+  //const [showSlides, setShowSlides] = useState(() => {
+  //  return sessionStorage.getItem("seenSlides") ? false : true;
+  //});
 
   useEffect(() => {
     if (!sessionStorage.getItem("appLoaded")) {
@@ -33,6 +37,13 @@ function App() {
     return <Loader />;
   }
 
+  //if (showSlides) {
+  //  return <SlideExplainer onComplete={() => {
+  //    sessionStorage.setItem("seenSlides", "true");
+  //    setShowSlides(false);
+  //  }} />;
+  //}
+
   return (
     <Router>
       <Routes>
@@ -44,6 +55,7 @@ function App() {
         <Route path="/politica-de-privacidad" element={<PoliticaPrivacidad />} />
         <Route path="/eliminar-cuenta" element={<EliminarCuenta />} />
         <Route path="/terminos" element={<Terminos />} />
+        <Route path="/help" element={<Help />} />
       </Routes>
     </Router>
   );

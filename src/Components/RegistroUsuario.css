@@ -217,3 +217,26 @@ html, body, #root {
 .react-tel-input .flag-dropdown, .react-tel-input .flag-dropdown.open{
   background-color: #232343 !important; 
 }
+
+.button {
+  position: absolute;
+  top: 30px;
+  right: 30px;
+  padding: 5px;
+  background-color: yellow;
+  color: black;
+  border: 2px solid black;
+  border-radius: 0px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 16px;
+  z-index: 1000;
+  transform: none;
+  outline-style: none;
+}
+
+.button-container {
+  display: flex;
+  justify-content: center;
+  margin-top: 20px;
+}

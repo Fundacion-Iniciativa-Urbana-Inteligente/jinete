@@ -7,16 +7,14 @@ const TerminosCondiciones = () => {
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-10 bg-white rounded-xl shadow-lg text-gray-800">
-      <div className="flex justify-end mb-4">
-        <button
-          type="button"
-          onClick={() => navigate("/registro")}
-          className="bg-blue-600 text-white py-2 px-4 rounded-lg shadow hover:bg-blue-700 transition"
-        >
-          Volver al Registro
-        </button>
-      </div>
-      <h1 className="text-3xl font-bold text-center mb-6">Términos y Condiciones de Uso</h1>
+      <div className="button-container">
+           <a href="/registro">
+            <button className="button">Volver al registro</button>
+           </a>
+        </div>
+        <h1 className="text-3xl font-bold text-center mb-6" style={{ color: "black" }} >
+          Términos y Condiciones de Uso
+        </h1>
       <p className="text-center text-sm text-gray-600">Última actualización: 11 de marzo de 2025</p>
 
       <p className="mt-4">
